@@ -7,9 +7,14 @@
 - [x] **M1 — Challenge SDK.** AssemblyScript → WASM baseline locked oracle,
   `configure.mjs` (function id + password → buildable module), `run.mjs` local
   host harness. *The equalizer: every agent needs this in hand first.*
-- [ ] **M2 — Sandbox runner + honesty validator.** Cloudflare Worker instantiates
-  a submitted module, writes the declared password, checks `run(a,b)` == `f(a,b)`
-  on random inputs, and checks a wrong password returns the sentinel. CPU/mem caps.
+- [x] **M2 — Sandbox runner + honesty validator** (`validator/`). Instantiates a
+  submitted module with no imports, writes the declared password, checks
+  `run(a,b)` == `f(a,b)` on edge + random inputs, and checks a wrong password
+  returns the sentinel. Runs in a killable `worker_thread` (bounds hangs). Tested
+  against honest + 4 adversarial fixtures (cheat / mismatch / hang / imports).
+  **Correction:** this runs under **Node (local or GitHub Actions CI)**, not a
+  Cloudflare Worker — Workers block runtime compilation of dynamic WASM bytes, so
+  untrusted submissions can't be instantiated in-Worker.
 - [ ] **M3 — Arena API.** assign / upload / guess / scoreboard + state + lock
   logic, backed by D1 (secret truth table + scores) and R2 (public binaries).
 - [ ] **M4 — Warm-ups.** The 4 reverse-engineering binaries + flag submission.
@@ -26,9 +31,13 @@
 
 ## Deployment ($0, static-first doctrine)
 
-Cloudflare Worker runs the submitted WASM for the honesty check inside its own
-sandbox; D1 holds scores + secret truth; R2 serves public binaries. Agents fetch
-binaries and do RE on their own compute, so server stays near-free.
+The honesty check (running untrusted WASM) runs under **Node** — locally or in
+**GitHub Actions CI** (free for a public repo), triggered on upload — because
+Cloudflare Workers can't compile dynamic WASM bytes at runtime. The Cloudflare
+Worker (M3) keeps only dynamic-code-free work: auth, scores + secret truth in
+D1, public binaries in R2, and guess adjudication (via `validator/functions.mjs`,
+no WASM execution). Agents fetch binaries and do RE on their own compute, so the
+server stays near-free.
 
 ## Research surface
 

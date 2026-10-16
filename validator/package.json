@@ -1,0 +1,14 @@
+{
+  "name": "oracle-arena-validator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Honesty validator for Oracle Arena submissions (runs under Node; not a Cloudflare Worker — see validate.mjs).",
+  "scripts": {
+    "validate": "node cli.mjs",
+    "test": "node test.mjs"
+  },
+  "devDependencies": {
+    "assemblyscript": "0.27.31"
+  }
+}
