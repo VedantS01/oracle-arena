@@ -11,6 +11,8 @@ import { fileURLToPath } from "node:url";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..");
 const NUM_BOTS = Number(process.env.NUM_BOTS || 5);
+const LLM_BOTS = Number(process.env.LLM_BOTS || 0);        // first N bots use the Ollama brain
+const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "qwen2.5-coder:7b";
 const BUILD_MS = Number(process.env.BUILD_MS || 30 * 60_000);
 const ATTACK_MS = Number(process.env.ATTACK_MS || 60 * 60_000);
 const PORT = Number(process.env.PORT || 8787);
@@ -51,31 +53,36 @@ const agents = await adminPost("/admin/agents", { count: NUM_BOTS });
 console.log(`\n[trial] registered ${agents.length} bots; spawning...`);
 console.log(`[trial] DASHBOARD → http://localhost:${PORT}/?key=${ADMIN_KEY}\n`);
 
-// 3. spawn every bot at ~t0
-for (const a of agents) {
+// 3. spawn every bot at ~t0 (first LLM_BOTS use the Ollama brain, the rest scripted)
+agents.forEach((a, idx) => {
   const ws = join(RUN_DIR, "workspaces", a.id);
-  const bot = spawn("node", [join(ROOT, "bot", "scripted-bot.mjs")], {
+  const useLLM = idx < LLM_BOTS;
+  const script = useLLM ? "llm-bot.mjs" : "scripted-bot.mjs";
+  const bot = spawn("node", [join(ROOT, "bot", script)], {
     env: { ...process.env, ARENA_URL: URL_, ARENA_TOKEN: a.token, BOT_ID: a.id,
-           BOT_WORKSPACE: ws, ASSEMBLY_DIR: join(ROOT, "sdk", "assembly") },
+           BOT_WORKSPACE: ws, ASSEMBLY_DIR: join(ROOT, "sdk", "assembly"),
+           OLLAMA_URL: process.env.OLLAMA_URL || "http://localhost:11434/v1", OLLAMA_MODEL },
     stdio: ["ignore", "inherit", "inherit"],
   });
   children.push(bot);
-}
+  console.log(`[trial]   ${a.id}: ${useLLM ? "LLM(" + OLLAMA_MODEL + ")" : "scripted"}`);
+});
 
 // 4. start the clock
 const c0 = await adminPost("/admin/start", {});
 console.log(`[trial] clock started. build ${BUILD_MS}ms -> attack ${ATTACK_MS}ms\n`);
 
-// 5. live leaderboard
-const endsAt = c0.attack_ends_at;
+// 5. live leaderboard — poll until the round actually ends (verify is variable-length)
+void c0;
 let lastPhase = "";
-while (Date.now() < endsAt + 1500) {
+for (;;) {
   const state = await get("/v1/state");
   const board = await get("/v1/leaderboard");
   if (state.phase !== lastPhase) { console.log(`\n==== phase: ${state.phase.toUpperCase()} ====`); lastPhase = state.phase; }
   const line = board.map((r) => `${r.id}:${r.score}${r.locked ? "🔒" : ""}`).join("  ");
-  const left = Math.max(0, Math.round((endsAt - Date.now()) / 1000));
-  process.stdout.write(`\r[${state.phase}] ${line}   (${left}s left)        `);
+  const left = state.phase === "attack" && state.attack_ends_at
+    ? Math.max(0, Math.round((state.attack_ends_at - Date.now()) / 1000)) + "s left" : state.phase;
+  process.stdout.write(`\r[${state.phase}] ${line}   (${left})        `);
   if (state.phase === "ended") break;
   await sleep(1000);
 }

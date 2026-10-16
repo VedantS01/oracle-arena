@@ -29,7 +29,7 @@
   h1 .sub{color:var(--muted);font-weight:500}
   .status{display:flex;gap:10px;align-items:center;font-family:var(--mono);font-size:13px}
   .badge{padding:4px 11px;border-radius:999px;font-weight:600;border:1px solid var(--line);background:var(--surface)}
-  .badge.build{color:var(--accent)} .badge.attack{color:var(--loss)} .badge.ended{color:var(--muted)} .badge.pending{color:var(--muted)}
+  .badge.build{color:var(--accent)} .badge.attack{color:var(--loss)} .badge.ended{color:var(--muted)} .badge.pending{color:var(--muted)} .badge.verify{color:var(--lock)}
   .dot{width:8px;height:8px;border-radius:50%;background:var(--loss)}
   .dot.on{background:var(--gain)}
   .grid{display:grid;grid-template-columns:1.1fr 1fr;gap:16px}
@@ -47,8 +47,15 @@
   .bot .fn{font-family:var(--mono);font-size:12px;color:var(--accent);margin-top:2px}
   .bot .meta{display:flex;justify-content:space-between;align-items:baseline;margin-top:8px}
   .bot .pts{font-family:var(--mono);font-weight:600;font-size:16px}
+  .bot .thought{margin-top:8px;font-size:11px;line-height:1.45;color:var(--muted);font-style:italic;
+    border-top:1px dashed var(--line);padding-top:6px;min-height:30px;
+    display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+  .bot .thought::before{content:"💭 ";font-style:normal}
   .pill{font-family:var(--mono);font-size:10.5px;padding:2px 7px;border-radius:6px;font-weight:600;border:1px solid var(--line)}
-  .pill.building{color:var(--muted)} .pill.submitted{color:var(--gain);background:var(--gain-bg);border-color:transparent}
+  .pill.building{color:var(--muted)} .pill.pending{color:var(--muted)}
+  .pill.submitted{color:var(--gain);background:var(--gain-bg);border-color:transparent}
+  .pill.verifying{color:var(--lock);background:var(--lock-bg);border-color:transparent}
+  .pill.rejected{color:var(--loss);background:var(--loss-bg);border-color:transparent}
   .pill.locked{color:var(--lock);background:var(--lock-bg);border-color:transparent}
   .feed{height:440px;overflow-y:auto;font-family:var(--mono);font-size:12px;display:flex;flex-direction:column;gap:3px}
   .ev{display:flex;gap:8px;padding:4px 6px;border-radius:6px;align-items:baseline}
@@ -113,7 +120,7 @@
       if (s.error) return;
       fnNames = Object.fromEntries(s.functions.map(f => [f.id, f.name]));
       renderClock(s.clock, s.lock_at);
-      renderBoard(s.agents);
+      renderBoard(s.agents, s.clock.phase, s.lock_at);
       renderBots(s.agents, s.clock.phase, s.lock_at);
     } catch {}
   }
@@ -124,6 +131,7 @@
     $("phase").className = "badge " + ph;
     let left = "";
     if (ph === "build" && c.build_ends_at) left = secs(c.build_ends_at - c.now) + " to submit";
+    else if (ph === "verify") left = "verifying submissions…";
     else if (ph === "attack" && c.attack_ends_at) left = secs(c.attack_ends_at - c.now) + " left";
     else if (ph === "ended") left = "round over";
     else left = "awaiting start";
@@ -131,25 +139,31 @@
   }
   const secs = (ms) => Math.max(0, Math.round(ms/1000)) + "s";
 
-  function renderBoard(agents){
+  function botStatus(a, phase, lockAt){
+    if (a.locked) return { cls:"locked", label:`locked ${a.attempts}/${lockAt}` };
+    if (a.valid) return { cls:"submitted", label:"verified" };
+    if (a.verified && !a.valid) return { cls:"rejected", label:"rejected" };
+    if (a.submitted && phase === "verify") return { cls:"verifying", label:"verifying…" };
+    if (a.submitted) return { cls:"pending", label:"submitted" };
+    return { cls:"building", label:"building…" };
+  }
+
+  function renderBoard(agents, phase, lockAt){
     const rows = [...agents].sort((a,b)=>b.score-a.score);
     $("board").innerHTML = rows.map((a,i)=>{
-      const st = a.locked ? `<span class="pill locked">locked</span>`
-               : a.valid ? `<span class="pill submitted">submitted</span>`
-               : `<span class="pill building">building</span>`;
+      const s = botStatus(a, phase, lockAt);
       return `<tr><td class="rank">${i+1}</td><td>${a.id}</td>
-        <td class="score">${a.score}</td><td>${st}</td><td>${a.attempts}</td></tr>`;
+        <td class="score">${a.score}</td><td><span class="pill ${s.cls}">${s.label}</span></td><td>${a.attempts}</td></tr>`;
     }).join("");
   }
 
   function renderBots(agents, phase, lockAt){
     $("bots").innerHTML = agents.map(a=>{
-      const st = a.locked ? `<span class="pill locked">locked ${a.attempts}/${lockAt}</span>`
-               : a.valid ? `<span class="pill submitted">submitted</span>`
-               : `<span class="pill building">building…</span>`;
+      const s = botStatus(a, phase, lockAt);
       return `<div class="bot"><div class="id">${a.id}</div>
         <div class="fn">${a.function_name} <span style="color:var(--muted)">(fn ${a.function_id})</span></div>
-        <div class="meta"><span class="pts">${a.score}</span>${st}</div></div>`;
+        <div class="meta"><span class="pts">${a.score}</span><span class="pill ${s.cls}">${s.label}</span></div>
+        <div class="thought">${a.last_thought ? escapeHtml(a.last_thought) : ""}</div></div>`;
     }).join("");
   }
 
@@ -167,7 +181,10 @@
     let cls = e.type, msg = "", who = e.actor || "";
     if (e.type === "access") msg = e.note || `read ${e.path.replace("/v1/","")}`;
     else if (e.type === "register") msg = `joined — assigned ${e.function_name} (fn ${e.function_id})`;
-    else if (e.type === "submit") { cls = e.ok ? "submit" : "submit-fail"; msg = e.ok ? `submitted binary (${e.bytes}B), validated` : `submission rejected: ${e.reason}`; }
+    else if (e.type === "submit") { cls = e.ok ? "submit" : "submit-fail"; msg = e.ok ? `submitted binary (${e.bytes}B) — ${e.note || "accepted"}` : `submission rejected: ${e.reason}`; }
+    else if (e.type === "verify_start") { who = ""; cls = "phase"; msg = `verifying ${e.count} submissions…`; }
+    else if (e.type === "verify") { cls = e.ok ? "submit" : "submit-fail"; msg = e.ok ? "verified ✓ (honest + locks)" : `rejected: ${e.reason}`; }
+    else if (e.type === "verify_done") { who = ""; cls = "phase"; msg = `verification complete — ${e.valid} valid. the hunt begins.`; }
     else if (e.type === "guess") { cls = e.correct ? "guess-correct" : "guess-wrong"; msg = `guessed ${e.target} = ${e.function_name} → ${e.correct ? "CORRECT +2" : "WRONG −2"} (now ${e.guesser_score})`; }
     else if (e.type === "lock") { who = ""; msg = `🔒 ${e.target} locked after ${e.attempts} attempts`; }
     else if (e.type === "phase") { who = ""; msg = `── phase: ${e.phase.toUpperCase()} ──`; }

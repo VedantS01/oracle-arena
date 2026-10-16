@@ -35,21 +35,22 @@ const fnName = (id) => functionsDoc.functions[id]?.name ?? "?";
 // --- state (lives only here; persisted to the private dir for inspection) ---
 const agents = new Map();   // token -> agent
 const byId = new Map();     // id -> agent
+// phases: pending -> build -> verify -> attack -> ended
+// build has a HARD absolute deadline (submissions after it are refused). verify
+// is a processing window of variable length (the server checks each submission);
+// attack is time-bound from the moment verification completes.
 let startedAt = null;
+let attackStartedAt = null;
+let phaseState = "pending";
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function now() { return Date.now(); }
-function phase() {
-  if (startedAt === null) return "pending";
-  const t = now() - startedAt;
-  if (t < BUILD_MS) return "build";
-  if (t < BUILD_MS + ATTACK_MS) return "attack";
-  return "ended";
-}
+function phase() { return phaseState; }
 function clock() {
   return {
-    phase: phase(), now: now(), started_at: startedAt,
+    phase: phaseState, now: now(), started_at: startedAt,
     build_ends_at: startedAt === null ? null : startedAt + BUILD_MS,
-    attack_ends_at: startedAt === null ? null : startedAt + BUILD_MS + ATTACK_MS,
+    attack_ends_at: attackStartedAt === null ? null : attackStartedAt + ATTACK_MS,
   };
 }
 function saveState() {
@@ -75,12 +76,42 @@ function spectatorSnapshot() {
     functions: functionsDoc.functions.map((f) => ({ id: f.id, name: f.name })),
     agents: [...byId.values()].map((a) => ({
       id: a.id, function_id: a.functionId, function_name: fnName(a.functionId),
-      score: a.score, submitted: a.submitted, valid: a.valid, locked: a.locked,
-      attempts: a.attempts, i_guessed: [...a.iGuessed], guessed_by: [...a.guessedBy] })),
+      score: a.score, submitted: a.submitted, valid: a.valid, verified: a.verified, locked: a.locked,
+      attempts: a.attempts, last_thought: a.lastThought || null,
+      i_guessed: [...a.iGuessed], guessed_by: [...a.guessedBy] })),
   };
 }
-let lastEmittedPhase = null;
-setInterval(() => { const p = phase(); if (p !== lastEmittedPhase) { lastEmittedPhase = p; emit("phase", { phase: p }); } }, 400).unref();
+// verify each accepted submission after the build deadline, with visible pacing,
+// then open the attack phase.
+async function runVerification() {
+  const subs = [...byId.values()].filter((a) => a.submitted && a.submission);
+  emit("verify_start", { count: subs.length });
+  for (const a of subs) {
+    await sleep(500); // deliberate pacing so verification is observable
+    const s = a.submission;
+    let ok = false, reason = "";
+    if (s.functionId !== a.functionId) { reason = "declared function is not the one assigned"; }
+    else { const v = await validateModule(s.bytes, a.functionId, String(s.password)); ok = v.ok; reason = v.reason || ""; }
+    a.valid = ok; a.verified = true;
+    if (ok) writeFileSync(join(PRIVATE_DIR, "binaries", a.binaryName), Buffer.from(s.bytes));
+    emit("verify", { actor: a.id, ok, reason });
+    saveState();
+  }
+  emit("verify_done", { valid: subs.filter((a) => a.valid).length });
+  attackStartedAt = now();
+  phaseState = "attack";
+  emit("phase", { phase: "attack" });
+}
+
+let verifying = false;
+setInterval(() => {
+  if (phaseState === "build" && startedAt !== null && now() >= startedAt + BUILD_MS && !verifying) {
+    phaseState = "verify"; emit("phase", { phase: "verify" });
+    verifying = true; runVerification().finally(() => { verifying = false; });
+  } else if (phaseState === "attack" && attackStartedAt !== null && now() >= attackStartedAt + ATTACK_MS) {
+    phaseState = "ended"; emit("phase", { phase: "ended" });
+  }
+}, 300).unref();
 
 // --- tiny HTTP helpers ---
 function send(res, code, body, type = "application/json") {
@@ -136,8 +167,8 @@ const server = createServer(async (req, res) => {
       const id = `bot-${byId.size + 1}`;
       const token = randomBytes(16).toString("hex");
       const functionId = Math.floor(Math.random() * 10);
-      const a = { id, token, functionId, score: START_SCORE, submitted: false, valid: false,
-                  binaryName: null, attempts: 0, locked: false, guessedBy: new Set(), iGuessed: new Set() };
+      const a = { id, token, functionId, score: START_SCORE, submitted: false, valid: false, verified: false,
+                  submission: null, binaryName: null, attempts: 0, locked: false, guessedBy: new Set(), iGuessed: new Set() };
       agents.set(token, a); byId.set(id, a);
       emit("register", { actor: id, function_id: functionId, function_name: fnName(functionId) });
       out.push({ id, token, assigned_function_id: functionId });
@@ -147,7 +178,7 @@ const server = createServer(async (req, res) => {
   }
   if (path === "/admin/start" && m === "POST") {
     if ((req.headers["x-admin-key"] || "") !== ADMIN_KEY) return send(res, 403, { error: "admin only" });
-    startedAt = now(); saveState();
+    startedAt = now(); phaseState = "build"; emit("phase", { phase: "build" }); saveState();
     return send(res, 200, clock());
   }
 
@@ -183,24 +214,24 @@ const server = createServer(async (req, res) => {
 
   if (path === "/v1/log" && m === "POST") {
     const b = await readBody(req);
-    emit("bot", { actor: me.id, msg: String(b?.msg || "").slice(0, 200) });
+    const msg = String(b?.msg || "").slice(0, 280);
+    me.lastThought = msg;
+    emit("bot", { actor: me.id, msg });
     return send(res, 200, { ok: true });
   }
 
   if (path === "/v1/upload" && m === "POST") {
+    // accept (and store) up to the hard deadline; legitimacy is checked in the verify phase
     if (phase() !== "build") { emit("submit", { actor: me.id, ok: false, reason: `phase ${phase()}` }); return send(res, 403, { error: `uploads closed (phase: ${phase()})` }); }
     const body = await readBody(req);
     if (!body || !body.wasm_base64 || body.function_id === undefined || body.password === undefined)
       return send(res, 400, { error: "need { wasm_base64, function_id, password }" });
-    if (body.function_id !== me.functionId) { emit("submit", { actor: me.id, ok: false, reason: "wrong function id" }); return send(res, 422, { ok: false, reason: "declared function id is not the one assigned to you" }); }
     const bytes = new Uint8Array(Buffer.from(body.wasm_base64, "base64"));
-    const verdict = await validateModule(bytes, me.functionId, String(body.password));
-    if (!verdict.ok) { emit("submit", { actor: me.id, ok: false, reason: verdict.reason }); return send(res, 422, verdict); }
-    const name = `${me.id}.wasm`;
-    writeFileSync(join(PRIVATE_DIR, "binaries", name), Buffer.from(bytes));
-    me.submitted = true; me.valid = true; me.binaryName = name; saveState();
-    emit("submit", { actor: me.id, ok: true, bytes: bytes.length });
-    return send(res, 200, { ok: true, id: me.id });
+    me.submission = { bytes, functionId: body.function_id, password: String(body.password) };
+    me.submitted = true; me.valid = false; me.verified = false; me.binaryName = `${me.id}.wasm`;
+    saveState();
+    emit("submit", { actor: me.id, ok: true, bytes: bytes.length, note: "accepted; pending verification" });
+    return send(res, 200, { ok: true, id: me.id, status: "accepted; verified after the build deadline" });
   }
 
   if (path === "/v1/targets" && m === "GET") {
