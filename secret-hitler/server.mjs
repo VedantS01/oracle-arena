@@ -53,16 +53,14 @@ let VOICES = {};            // alias -> macOS voice name
 let NARR_VOICE = null;      // the narrator's voice
 const speechQ = [];         // { voice, text, onStart }
 let speaking = false;
+// A curated allowlist of CLEAR, distinct speech voices (verified installed on
+// this machine). We never fall back to macOS novelty voices (Bells, Boing,
+// Bubbles, Zarvox, …), which are unintelligible sound-effect voices.
+const CLEAR_VOICES = (process.env.VOICES || "Samantha|Daniel (English (UK))|Karen|Reed (English (US))|Moira (English (Ireland))|Rocko (English (US))|Flo (English (US))|Eddy (English (US))").split("|");
+const NARRATOR_V = process.env.NARRATOR_VOICE || "Grandpa (English (US))";
 function assignVoices(ids) {
-  let avail = [];
-  try {
-    const r = spawnSync("say", ["-v", "?"], { encoding: "utf8" });
-    if (r.status === 0) avail = r.stdout.split("\n").map((l) => { const mm = l.match(/^(.+?)\s+(en_[A-Z]{2})\s/); return mm ? mm[1].trim() : null; }).filter(Boolean);
-  } catch {}
-  const preferred = ["Alex", "Daniel", "Samantha", "Karen", "Moira", "Tessa", "Fred", "Veena", "Rishi", "Serena", "Allison", "Tom", "Victoria", "Oliver", "Kate"];
-  const ordered = [...preferred.filter((n) => avail.includes(n)), ...avail.filter((n) => !preferred.includes(n))];
-  VOICES = {}; ids.forEach((id, i) => { VOICES[id] = ordered.length ? ordered[i % ordered.length] : null; });
-  NARR_VOICE = ordered.length ? ordered[(ids.length) % ordered.length] : null;
+  VOICES = {}; ids.forEach((id, i) => { VOICES[id] = CLEAR_VOICES[i % CLEAR_VOICES.length]; });
+  NARR_VOICE = NARRATOR_V;
   emit("voices", { voices: VOICES, narrator: NARR_VOICE, tts: TTS });
 }
 function drainSpeech() {
