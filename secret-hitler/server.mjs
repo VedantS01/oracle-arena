@@ -19,6 +19,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8799);
 const DISCUSSION_MS = Number(process.env.DISCUSSION_MS || 45_000);
 const ACTION_MS = Number(process.env.ACTION_MS || 40_000);
+const QUIET_MS = Number(process.env.QUIET_MS || 14_000); // close a debate this long after the last thing was said
 const ADMIN_KEY = process.env.ARENA_ADMIN_KEY || "sh-admin";
 const SEED = Number(process.env.SEED || Date.now() % 1e9);
 const now = () => Date.now();
@@ -85,6 +86,7 @@ function narrate(text) { emit("narrate", { text }); enqueueSpeech({ voice: NARR_
 function post(from, msg) {
   const p = { seq: forum.length + 1, from, msg: String(msg).replace(/\s+/g, " ").trim().slice(0, 220), t: now(), round: game?.round, phase: cur?.kind };
   forum.push(p); if (forum.length > 2000) forum.shift();
+  if (cur && cur.kind === "discussion") cur.lastActivity = now(); // a lull after this closes the debate
   // reveal + speak this post when the queue reaches it, so text flows at talking pace
   enqueueSpeech({ voice: VOICES[from] || null, text: p.msg, onStart: () => emit("say", { actor: from, msg: p.msg, speaking: true }) });
   return p;
@@ -129,7 +131,7 @@ function startDiscussion(topic, key) {
   // deduce yet), more as policies/suspicions accumulate.
   const enacted = (game.liberalPolicies || 0) + (game.fascistPolicies || 0);
   const need = Math.max(1, Math.min(game.alive().length, 2 + enacted));
-  cur = { kind: "discussion", key, topic, openedAt: now(), floorUntil: now() + floor, deadline: now() + DISCUSSION_MS, posted: new Set(), need };
+  cur = { kind: "discussion", key, topic, openedAt: now(), floorUntil: now() + floor, deadline: now() + DISCUSSION_MS, posted: new Set(), need, lastActivity: now() };
   emit("discussion_open", { topic, round: game.round, deadline: cur.deadline, need, president: game.president, chancellor: game.chancellor });
 }
 function startAction(pend, key) {
@@ -172,7 +174,8 @@ function tick() {
     // never cut speech off mid-sentence: the window only closes once the voice
     // queue is idle, so written messages flow at the rate they are spoken.
     const enough = cur.posted.size >= (cur.need || game.alive().length);
-    const close = speechIdle() && (now() >= cur.deadline || (enough && now() >= cur.floorUntil));
+    const quiet = now() - cur.lastActivity > QUIET_MS; // nobody has spoken for a while
+    const close = speechIdle() && now() >= cur.floorUntil && (enough || quiet || now() >= cur.deadline);
     if (close) { emit("discussion_close", { round: game.round }); advance(); }
     return;
   }
