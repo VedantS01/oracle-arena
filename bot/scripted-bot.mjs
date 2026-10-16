@@ -95,8 +95,9 @@ for (;;) {
   const s = (await api("/v1/state")).body;
   if (s.phase === "ended") break;
   const targets = (await api("/v1/targets")).body;
-  for (const t of Array.isArray(targets) ? targets : []) {
-    if (tried.has(t.id)) continue;
+  const fresh = (Array.isArray(targets) ? targets : []).filter((t) => !tried.has(t.id));
+  if (fresh.length === 0) { log("no untried targets left; done attacking."); break; }
+  for (const t of fresh) {
     tried.add(t.id);
     const dl = await api(`/v1/binary/${t.id}`);
     if (!(dl.body instanceof Uint8Array)) continue;

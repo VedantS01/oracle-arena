@@ -205,7 +205,7 @@ const server = createServer(async (req, res) => {
 
   if (path === "/v1/targets" && m === "GET") {
     if (phase() !== "attack") return send(res, 403, { error: `targets available in the attack phase only (phase: ${phase()})` });
-    emit("access", { actor: me.id, path });
+    // note: not emitted to the feed — it is a high-frequency poll; binary downloads are the real recon signal
     const list = [...byId.values()].filter((a) => a.valid && a.id !== me.id && !a.locked && !me.iGuessed.has(a.id))
       .map((a) => ({ id: a.id, attempts: a.attempts, locked: a.locked, binary: `/v1/binary/${a.id}` }));
     return send(res, 200, list);
