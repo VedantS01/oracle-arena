@@ -216,35 +216,37 @@
   // always hit the server fresh — a cached snapshot/stream response is what made
   // a valid key look "unauthorized" in the browser.
   const snapURL = (k) => `/spectator/snapshot?key=${encodeURIComponent(k)}&_=${Date.now()}`;
-  function showKeyPrompt(msg){ if (intv) { clearInterval(intv); intv = null; } started = false; $("app").hidden = true; $("nokey").hidden = false; $("keymsg").textContent = msg || ""; }
-  async function tryKey(k){
+  let streamed = false;
+  function enterArena(){ $("nokey").hidden = true; $("app").hidden = false; if (!streamed) { streamed = true; connectStream(); } }
+  function showKeyPrompt(msg){ $("app").hidden = true; $("nokey").hidden = false; if (msg !== undefined) $("keymsg").textContent = msg; }
+  function tryKey(k){
     if (!k) { $("keymsg").textContent = "enter a key"; return; }
-    let r; try { r = await fetch(snapURL(k), { cache: "no-store" }); } catch (e) { showKeyPrompt("cannot reach the arena server — is it still running?"); return; }
-    const body = await r.json().catch(() => null);
-    if (r.status === 200 && body && !body.error) {
-      KEY = k; try { localStorage.setItem("arenaKey", k); } catch {}
-      $("keymsg").textContent = ""; $("nokey").hidden = true; $("app").hidden = false;
-      render(body); started = true; connectStream(); if (intv) clearInterval(intv); intv = setInterval(pollSnapshot, 1000);
-    } else {
-      try { localStorage.removeItem("arenaKey"); } catch {}
-      showKeyPrompt(`key rejected (HTTP ${r.status})` + (body && body.error ? ` — ${body.error}` : ""));
-    }
+    KEY = k; try { localStorage.setItem("arenaKey", k); } catch {}
+    $("keymsg").textContent = ""; enterArena(); pollSnapshot();
   }
   $("keygo").addEventListener("click", () => tryKey($("keyin").value.trim()));
   $("keyin").addEventListener("keydown", (e) => { if (e.key === "Enter") tryKey($("keyin").value.trim()); });
 
-  // KEY from ?key= / #key= / last time / the local-trial default, then VERIFY it.
-  const guess = KEY || (location.hash.match(/[#&]key=([^&]+)/) || [])[1] || (()=>{ try { return localStorage.getItem("arenaKey"); } catch { return null; } })() || "trial-admin";
-  $("keyin").value = guess;
-  tryKey(guess);
+  // Resolve the key (?key= / #key= / last time / the local-trial default) and
+  // show the arena OPTIMISTICALLY. We never gate the whole UI on the first fetch:
+  // only a real auth rejection (401/403) shows the key box; transient network or
+  // parse hiccups are ignored and retried on the next tick.
+  KEY = KEY || (location.hash.match(/[#&]key=([^&]+)/) || [])[1] || (()=>{ try { return localStorage.getItem("arenaKey"); } catch { return null; } })() || "trial-admin";
+  $("keyin").value = KEY;
+  enterArena();
+  pollSnapshot();
+  intv = setInterval(pollSnapshot, 1000);
 
   async function pollSnapshot(){
-    try{
-      const s = await (await fetch(snapURL(KEY), { cache: "no-store" })).json();
-      if (s && s.error) { showKeyPrompt(`key rejected — ${s.error}`); return; }
-      if (!s) return;
-      render(s);
-    }catch{}
+    let r;
+    try { r = await fetch(snapURL(KEY), { cache: "no-store" }); } catch { return; } // transient: retry next tick
+    if (r.status === 401 || r.status === 403) { try { localStorage.removeItem("arenaKey"); } catch {} showKeyPrompt("key rejected — enter the spectator key"); return; }
+    if (r.status !== 200) return;
+    let s; try { s = await r.json(); } catch { return; }
+    if (!s) return;
+    if (s.error) { showKeyPrompt(`key rejected — ${s.error}`); return; }
+    enterArena();     // valid data arrived — make sure the arena is showing
+    render(s);
   }
   function render(s){
       fnNames = Object.fromEntries(s.functions.map(f => [f.id, f.name]));
