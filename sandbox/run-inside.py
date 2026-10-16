@@ -57,6 +57,24 @@ elif lang == "build":
     os.chmod("prog", 0o755); prog = ["./prog"]
     if job.get("return_binary"):
         extra["binary_b64"] = base64.b64encode(open("prog", "rb").read()).decode()
+elif lang == "recon":
+    # Free-form reverse-engineering: the attacker's target is written to ./target
+    # (executable), any helper files the attacker supplied are written alongside,
+    # and ONE shell command is run against them. The container holds strings,
+    # objdump, nm, readelf, gdb, ltrace, strace, xxd, gcc/g++, python3.
+    # Whatever the attacker does with them is theirs to invent. Returns the raw
+    # stdout/stderr so the attacker reasons over it; no answer is computed here.
+    open("target", "wb").write(raw); os.chmod("target", 0o755)
+    for f in job.get("files", []):
+        name = os.path.basename(str(f.get("name", ""))) or "x"
+        open(name, "wb").write(base64.b64decode(f.get("content_b64", "")))
+    try:
+        r = subprocess.run(["/bin/sh", "-lc", job.get("cmd", "")], capture_output=True, timeout=float(job.get("cmd_timeout", 15)))
+        out({"ok": True, "rc": r.returncode,
+             "stdout": r.stdout.decode("utf-8", "replace")[:20000],
+             "stderr": r.stderr.decode("utf-8", "replace")[:8000]})
+    except subprocess.TimeoutExpired:
+        out({"ok": False, "stage": "recon", "error": "command timeout"})
 else:
     out({"ok": False, "error": "unknown lang: %r" % lang})
 

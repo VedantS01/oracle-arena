@@ -7,6 +7,7 @@
 // Env: ARENA_URL, ARENA_TOKEN, BOT_ID, BOT_WORKSPACE, ASSEMBLY_DIR,
 //      OLLAMA_URL (default http://localhost:11434/v1), OLLAMA_MODEL
 import { buildBinary } from "./build-binary.mjs";
+import { probeTarget, reconTarget } from "./recon.mjs";
 import { mkdirSync } from "node:fs";
 
 const URL_ = process.env.ARENA_URL;
@@ -18,7 +19,6 @@ const ASSEMBLY_DIR = process.env.ASSEMBLY_DIR;
 const LLM_URL = (process.env.LLM_URL || process.env.OLLAMA_URL || "http://localhost:11434/v1").replace(/\/$/, "");
 const MODEL = process.env.LLM_MODEL || process.env.OLLAMA_MODEL || "qwen2.5-coder:7b";
 const LLM_API_KEY = process.env.LLM_API_KEY || "";
-const WRONG = -(2n ** 63n);
 const MAX_STEPS = Number(process.env.LLM_MAX_STEPS || 32);
 
 mkdirSync(WORKSPACE, { recursive: true });
@@ -39,27 +39,8 @@ async function postThought(msg) {
   if (t) { try { await arena("/v1/log", { method: "POST", body: JSON.stringify({ msg: t }) }); } catch {} log("💭", t); }
 }
 
-// --- reverse-engineering toolkit the bot "has installed" ---
-function extractStrings(bytes, min = 3) {
-  const out = new Set(); let cur = "";
-  for (const b of bytes) { if (b >= 0x20 && b < 0x7f) cur += String.fromCharCode(b);
-    else { if (cur.length >= min) out.add(cur); cur = ""; } }
-  if (cur.length >= min) out.add(cur);
-  for (const s of [...out]) for (let i = 0; i < s.length; i++) for (let j = i + min; j <= s.length; j++) out.add(s.slice(i, j));
-  return [...out];
-}
-async function crack(bytes) {
-  let ex; try { ex = (await WebAssembly.instantiate(bytes, {})).instance.exports; } catch { return null; }
-  const { memory, pwd_ptr, run } = ex;
-  if (typeof run !== "function" || typeof pwd_ptr !== "function") return null;
-  const call = (pw, a, b) => { const ptr = Number(pwd_ptr()); const p = new TextEncoder().encode(pw);
-    new Uint8Array(memory.buffer, ptr, p.length).set(p); return run(a, b, p.length); };
-  for (const cand of extractStrings(bytes)) { try { if (call(cand, 13n, 7n) !== WRONG) {
-    const probes = [[6n, 10n], [12n, 10n], [9n, 5n], [8n, 3n], [14n, 6n], [13n, 13n]];
-    return { password: cand, samples: probes.map(([a, b]) => ({ a: a.toString(), b: b.toString(), out: call(cand, a, b).toString() })) };
-  } } catch {} }
-  return null;
-}
+// No canned cracker: the model must reverse-engineer targets itself using the two
+// raw primitives below (probe_target / recon_target), reasoning over what it sees.
 
 // --- tools exposed to the model ---
 const tools = [
@@ -67,8 +48,10 @@ const tools = [
     parameters: { type: "object", properties: { path: { type: "string", description: "e.g. /v1/challenge, /v1/rules, /v1/functions, /v1/me, /v1/state, /v1/targets, /v1/leaderboard" } }, required: ["path"] } } },
   { type: "function", function: { name: "build_and_submit", description: "Build YOUR password-locked binary for the given function id and submit it. Only valid during the build phase.",
     parameters: { type: "object", properties: { function_id: { type: "integer" }, password: { type: "string" } }, required: ["function_id", "password"] } } },
-  { type: "function", function: { name: "analyze_target", description: "Download a rival's binary and attempt to recover its password and sample input/output pairs. Returns cracked=false if it resists.",
-    parameters: { type: "object", properties: { target_id: { type: "string" } }, required: ["target_id"] } } },
+  { type: "function", function: { name: "probe_target", description: "Run a rival's published binary with inputs YOU choose and see exactly what it prints. Each case runs `target a b password`; it prints WRONG_PASSWORD until you supply the right password, then the function's output. Use this to find the password and to deduce the hidden function from input/output behaviour.",
+    parameters: { type: "object", properties: { target_id: { type: "string" }, cases: { type: "array", items: { type: "object", properties: { a: { type: "integer" }, b: { type: "integer" }, password: { type: "string" } }, required: ["a", "b", "password"] } } }, required: ["target_id", "cases"] } } },
+  { type: "function", function: { name: "recon_target", description: "Download a rival's binary and run ONE shell command against it inside a locked sandbox. The binary is at ./target. Available tools: strings, objdump, nm, readelf, gdb, ltrace, strace, xxd, gcc, g++, python3. Returns the command's raw stdout/stderr. Example cmd: \"strings target | grep -i pass\" or \"objdump -d target | less\".",
+    parameters: { type: "object", properties: { target_id: { type: "string" }, cmd: { type: "string" } }, required: ["target_id", "cmd"] } } },
   { type: "function", function: { name: "guess", description: "Guess a target's hidden function id (0-9). Correct = +2 to you / -2 to them; wrong = the reverse.",
     parameters: { type: "object", properties: { target_id: { type: "string" }, function_id: { type: "integer" } }, required: ["target_id", "function_id"] } } },
 ];
@@ -83,11 +66,14 @@ async function execTool(name, args) {
       if (r.body?.ok) submitted = true;
       return { status: r.status, body: r.body };
     }
-    if (name === "analyze_target") {
-      const dl = await arena(`/v1/binary/${args.target_id}`);
-      if (!(dl.body instanceof Uint8Array)) return { cracked: false, note: `could not download (${dl.status})` };
-      const res = await crack(dl.body);
-      return res ? { cracked: true, password: res.password, samples: res.samples } : { cracked: false, note: "password not recovered" };
+    if (name === "probe_target") {
+      const cases = Array.isArray(args.cases) ? args.cases : [];
+      const outputs = await probeTarget(URL_, TOKEN, args.target_id, cases);
+      return outputs ? { outputs } : { error: "could not run target" };
+    }
+    if (name === "recon_target") {
+      const r = await reconTarget(URL_, TOKEN, args.target_id, String(args.cmd || ""));
+      return r ? { rc: r.rc, stdout: r.stdout, stderr: r.stderr, error: r.error } : { error: "could not run recon" };
     }
     if (name === "guess") { const r = await arena("/v1/guess", { method: "POST", body: JSON.stringify({ target: args.target_id, function_id: args.function_id }) }); return { status: r.status, body: r.body }; }
     return { error: "unknown tool" };

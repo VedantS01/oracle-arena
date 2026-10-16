@@ -158,7 +158,7 @@ async function runVerification() {
       if (s.kind === "wasm") { a.published = { name: `${a.id}.wasm`, type: "application/wasm", kind: "wasm" }; data = Buffer.from(s.bytes); }
       else if (s.kind === "binary") { a.published = { name: `${a.id}.bin`, type: "application/octet-stream", kind: "elf" }; data = Buffer.from(s.bytes); }
       else if (s.lang === "cpp" && binaryB64) { a.published = { name: `${a.id}.bin`, type: "application/octet-stream", kind: "elf" }; data = Buffer.from(binaryB64, "base64"); }
-      else { a.published = { name: `${a.id}.${s.lang === "python" ? "py" : "sh"}`, type: "text/plain", kind: "script" }; data = Buffer.from(s.source, "utf8"); }
+      else { a.published = { name: `${a.id}.${s.lang === "python" ? "py" : "sh"}`, type: "text/plain", kind: s.lang }; data = Buffer.from(s.source, "utf8"); }
       writeFileSync(join(PRIVATE_DIR, "binaries", a.published.name), data);
     }
     emit("verify", { actor: a.id, ok, reason });

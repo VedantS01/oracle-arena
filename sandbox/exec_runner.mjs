@@ -21,7 +21,7 @@ const LOCKDOWN = [
  * @param {{lang:string, source:string, ops:Array<[number|string,number|string,string]>, timeoutMs?:number}} job
  * @returns {Promise<{ok:boolean, results?:string[], stage?:string, error?:string, reason?:string}>}
  */
-export function runExec({ lang, source, sourceBytes, files, buildCmd, ops, timeoutMs = 20000, returnBinary = false }) {
+export function runExec({ lang, source, sourceBytes, files, buildCmd, cmd, cmdTimeout = 15, ops, timeoutMs = 20000, returnBinary = false }) {
   return new Promise((resolve) => {
     const p = spawn("docker", [...LOCKDOWN, IMAGE], { stdio: ["pipe", "pipe", "pipe"] });
     let out = "", err = "", done = false;
@@ -40,6 +40,12 @@ export function runExec({ lang, source, sourceBytes, files, buildCmd, ops, timeo
     let payload;
     if (lang === "build") {
       payload = { lang: "build", build_cmd: buildCmd || "", ops, op_timeout: 2, compile_timeout: 30, return_binary: returnBinary,
+        files: (files || []).map((f) => ({ name: f.name, content_b64: Buffer.from(f.content, "utf8").toString("base64") })) };
+    } else if (lang === "recon") {
+      // free-form RE: the target goes in as source_b64 (written to ./target), the
+      // attacker's shell command runs against it, raw stdout/stderr come back.
+      const target_b64 = sourceBytes ? Buffer.from(sourceBytes).toString("base64") : Buffer.from(source || "", "utf8").toString("base64");
+      payload = { lang: "recon", source_b64: target_b64, cmd: cmd || "", cmd_timeout: cmdTimeout,
         files: (files || []).map((f) => ({ name: f.name, content_b64: Buffer.from(f.content, "utf8").toString("base64") })) };
     } else {
       const source_b64 = sourceBytes ? Buffer.from(sourceBytes).toString("base64") : Buffer.from(source || "", "utf8").toString("base64");
