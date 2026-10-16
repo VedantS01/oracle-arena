@@ -11,8 +11,15 @@ import { fileURLToPath } from "node:url";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..");
 const NUM_BOTS = Number(process.env.NUM_BOTS || 5);
-const LLM_BOTS = Number(process.env.LLM_BOTS || 0);        // first N bots use the Ollama brain
-const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "qwen2.5-coder:7b";
+const LLM_BOTS = Number(process.env.LLM_BOTS || 0);        // back-compat: first N bots use the LLM brain
+const LLM_MODEL = process.env.LLM_MODEL || process.env.OLLAMA_MODEL || "qwen2.5-coder:7b";
+// BRAINS: comma list, one spec per bot. "scripted" | "<model>@ollama" | "<sonnet|haiku>@claude".
+// e.g. BRAINS="scripted,qwen2.5-coder:7b@ollama,gemma4:31b-cloud@ollama,haiku@claude,sonnet@claude"
+const BRAINS = (process.env.BRAINS || "").trim();
+const brainList = BRAINS
+  ? BRAINS.split(",").map((s) => s.trim()).filter(Boolean)
+  : Array.from({ length: NUM_BOTS }, (_, i) => (i < LLM_BOTS ? `${LLM_MODEL}@ollama` : "scripted"));
+const FIELD = brainList.length;
 const BUILD_MS = Number(process.env.BUILD_MS || 30 * 60_000);
 const ATTACK_MS = Number(process.env.ATTACK_MS || 60 * 60_000);
 const PORT = Number(process.env.PORT || 8787);
@@ -49,23 +56,22 @@ async function get(path) { return (await fetch(URL_ + path)).json(); }
 for (let i = 0; i < 40; i++) { try { await get("/v1/state"); break; } catch { await sleep(150); } }
 
 // 2. register the field
-const agents = await adminPost("/admin/agents", { count: NUM_BOTS });
+const agents = await adminPost("/admin/agents", { count: FIELD });
 console.log(`\n[trial] registered ${agents.length} bots; spawning...`);
 console.log(`[trial] DASHBOARD → http://localhost:${PORT}/?key=${ADMIN_KEY}\n`);
 
-// 3. spawn every bot at ~t0 (first LLM_BOTS use the Ollama brain, the rest scripted)
+// 3. spawn every bot at ~t0, one per brain spec
 agents.forEach((a, idx) => {
-  const ws = join(RUN_DIR, "workspaces", a.id);
-  const useLLM = idx < LLM_BOTS;
-  const script = useLLM ? "llm-bot.mjs" : "scripted-bot.mjs";
-  const bot = spawn("node", [join(ROOT, "bot", script)], {
-    env: { ...process.env, ARENA_URL: URL_, ARENA_TOKEN: a.token, BOT_ID: a.id,
-           BOT_WORKSPACE: ws, ASSEMBLY_DIR: join(ROOT, "sdk", "assembly"),
-           OLLAMA_URL: process.env.OLLAMA_URL || "http://localhost:11434/v1", OLLAMA_MODEL },
-    stdio: ["ignore", "inherit", "inherit"],
-  });
+  const spec = brainList[idx];
+  const base = { ...process.env, ARENA_URL: URL_, ARENA_TOKEN: a.token, BOT_ID: a.id,
+                 BOT_WORKSPACE: join(RUN_DIR, "workspaces", a.id), ASSEMBLY_DIR: join(ROOT, "sdk", "assembly") };
+  let script, env = base;
+  if (spec === "scripted") { script = "scripted-bot.mjs"; }
+  else if (spec.endsWith("@claude")) { script = "claude-bot.mjs"; env = { ...base, CLAUDE_MODEL: spec.replace(/@claude$/, "") }; }
+  else { script = "llm-bot.mjs"; env = { ...base, LLM_MODEL: spec.replace(/@ollama$/, ""), LLM_URL: process.env.LLM_URL || "http://localhost:11434/v1", LLM_API_KEY: process.env.LLM_API_KEY || "" }; }
+  const bot = spawn("node", [join(ROOT, "bot", script)], { env, stdio: ["ignore", "inherit", "inherit"] });
   children.push(bot);
-  console.log(`[trial]   ${a.id}: ${useLLM ? "LLM(" + OLLAMA_MODEL + ")" : "scripted"}`);
+  console.log(`[trial]   ${a.id}: ${spec}`);
 });
 
 // 4. start the clock

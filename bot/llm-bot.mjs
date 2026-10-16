@@ -13,8 +13,11 @@ const URL_ = process.env.ARENA_URL;
 const TOKEN = process.env.ARENA_TOKEN;
 const WORKSPACE = process.env.BOT_WORKSPACE;
 const ASSEMBLY_DIR = process.env.ASSEMBLY_DIR;
-const OLLAMA = (process.env.OLLAMA_URL || "http://localhost:11434/v1").replace(/\/$/, "");
-const MODEL = process.env.OLLAMA_MODEL || "qwen2.5-coder:7b";
+// Any OpenAI-compatible chat endpoint: local Ollama, Ollama Cloud (via the local
+// proxy), or a hosted provider like Anthropic's compat endpoint with an API key.
+const LLM_URL = (process.env.LLM_URL || process.env.OLLAMA_URL || "http://localhost:11434/v1").replace(/\/$/, "");
+const MODEL = process.env.LLM_MODEL || process.env.OLLAMA_MODEL || "qwen2.5-coder:7b";
+const LLM_API_KEY = process.env.LLM_API_KEY || "";
 const WRONG = -(2n ** 63n);
 const MAX_STEPS = Number(process.env.LLM_MAX_STEPS || 32);
 
@@ -127,7 +130,8 @@ function toolCallsFrom(msg) {
 
 // --- Ollama chat ---
 async function chat(messages) {
-  const r = await fetch(`${OLLAMA}/chat/completions`, { method: "POST", headers: { "content-type": "application/json" },
+  const headers = { "content-type": "application/json", ...(LLM_API_KEY ? { authorization: `Bearer ${LLM_API_KEY}` } : {}) };
+  const r = await fetch(`${LLM_URL}/chat/completions`, { method: "POST", headers,
     body: JSON.stringify({ model: MODEL, messages, tools, tool_choice: "auto", temperature: 0.4, stream: false }) });
   if (!r.ok) throw new Error(`ollama ${r.status}: ${(await r.text()).slice(0, 200)}`);
   const j = await r.json();
