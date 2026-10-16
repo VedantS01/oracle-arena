@@ -199,8 +199,10 @@ const server = createServer(async (req, res) => {
       can_talk: cur?.kind === "discussion" });
   }
   if (path === "/v1/state" && m === "GET") {
+    // the drawn policy tiles are secret — only the acting president/chancellor sees them
+    const privateTiles = cur?.kind === "action" && cur.pend.tiles && cur.pend.actor === me.id ? { tiles: cur.pend.tiles } : {};
     return send(res, 200, { ...(game ? game.publicState() : {}),
-      step: cur && { kind: cur.kind, topic: cur.topic, action: cur.pend?.type, actor: cur.pend?.actor, actors: cur.pend?.actors, options: cur.pend?.options, seconds_left: cur ? Math.max(0, Math.round((cur.deadline - now()) / 1000)) : null } });
+      step: cur && { kind: cur.kind, topic: cur.topic, action: cur.pend?.type, actor: cur.pend?.actor, actors: cur.pend?.actors, options: cur.pend?.options, ...privateTiles, seconds_left: cur ? Math.max(0, Math.round((cur.deadline - now()) / 1000)) : null } });
   }
   if (path === "/v1/forum" && m === "GET") return send(res, 200, { posts: forum.slice(-80) });
 
