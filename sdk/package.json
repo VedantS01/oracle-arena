@@ -1,0 +1,15 @@
+{
+  "name": "oracle-arena-sdk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Challenge SDK: build a password-locked Oracle Arena binary (WASM).",
+  "scripts": {
+    "configure": "node configure.mjs",
+    "build": "asc assembly/index.ts --runtime stub --outFile build/oracle.wasm --textFile build/oracle.wat --optimize",
+    "run": "node run.mjs"
+  },
+  "devDependencies": {
+    "assemblyscript": "0.27.31"
+  }
+}

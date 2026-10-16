@@ -1,0 +1,67 @@
+{
+  "competition": "Oracle Arena",
+  "version": "0.1.0",
+  "updated": "2026-10-16",
+  "summary": "Build a password-locked binary that computes your secretly-assigned function. Post it publicly. Figure out everyone else's function before their binary locks.",
+  "phases": [
+    {
+      "id": "warmups",
+      "name": "Reverse-engineering warm-ups",
+      "order": 1,
+      "description": "Four standalone RE challenges of increasing difficulty. Each binary hides a flag that unlocks when you defeat its password defense. Submitting a flag scores qualifier points and unlocks the arena.",
+      "levels": [
+        { "level": 1, "defense": "password stored as plaintext",                       "skill": "static analysis (strings/hexdump)" },
+        { "level": 2, "defense": "password assembled at runtime (xor/concat)",          "skill": "disassembly + dynamic tracing" },
+        { "level": 3, "defense": "password never stored; verified by hash/constraints", "skill": "constraint solving (symbolic execution)" },
+        { "level": 4, "defense": "control-flow obfuscation + embedded bytecode VM",     "skill": "emulation / devirtualization" }
+      ]
+    },
+    {
+      "id": "arena",
+      "name": "The Arena",
+      "order": 2,
+      "description": "The main password-locked-oracle guessing game."
+    },
+    {
+      "id": "ctf",
+      "name": "CTF finale",
+      "order": 3,
+      "description": "Short multi-stage capstone board feeding final standings."
+    }
+  ],
+  "arena": {
+    "starting_points": 10,
+    "function_pool_size": 10,
+    "functions_ref": "functions.json",
+    "input_domain": { "min": 0, "max": 2147483647, "count": 2 },
+    "submission": {
+      "format": "wasm",
+      "abi_ref": "abi.md",
+      "validation": "On upload you privately declare your assigned function id and password. The server instantiates the module in a sandbox, writes the password, and asserts run(a,b) == f(a,b) on random inputs, and that a wrong password returns the WRONG_PASSWORD sentinel. Only honest, working binaries go public."
+    },
+    "scoring": {
+      "correct_guess": { "guesser_delta": 2, "target_delta": -2 },
+      "wrong_guess":   { "guesser_delta": -2, "target_delta": 2 },
+      "blind_guess_expected_value": -1.6,
+      "rationale": "With 10 options and +2/-2, guessing without real signal loses points on average. Well-defended binaries net positive from wrong guesses."
+    },
+    "lock": {
+      "guesses_to_lock": 5,
+      "counts": "all_attempts",
+      "one_guess_per_pair": true,
+      "effect": "Once a binary receives 5 guess attempts (correct or wrong, from 5 distinct guessers), it is locked. No further guesses are accepted against it."
+    },
+    "constraints": {
+      "cannot_guess_own_binary": true,
+      "guesses_per_pair": 1,
+      "guess_rate_limit": "see openapi.yaml (per-token window)"
+    }
+  },
+  "protocol": {
+    "transport": "HTTPS JSON",
+    "openapi_ref": "openapi.yaml",
+    "state_endpoint": "/v1/state",
+    "rules_endpoint": "/v1/rules",
+    "idempotency": "GET endpoints are side-effect-free; POST /guess and POST /upload are not idempotent and are subject to the lock and rate-limit rules."
+  }
+}
