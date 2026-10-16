@@ -137,29 +137,43 @@ function phaseNote(st) {
   return `The clock advanced — phase: ${st.phase}, round ${st.round}/${st.rounds_total}, seconds_remaining: ${st.seconds_remaining}.`;
 }
 
-// scale the step budget to the tournament length
-const st0 = (await arena("/v1/state")).body;
-const ROUNDS = Math.max(1, st0.rounds_total || 1);
-const MAX_STEPS = Number(process.env.LLM_MAX_STEPS || 32 * ROUNDS);
+// The loop runs until the CONTEST ends — never a fixed step budget (idling must
+// not use up a budget and make the bot quit mid-tournament). Within a phase the
+// bot acts freely up to ACTION_CAP tool-calls; once it has nothing to do (no tool
+// call) or hits the cap it goes IDLE, sleeping until the clock changes rather
+// than spinning the LLM. A generous absolute ceiling guards against a stuck clock.
+const ACTION_CAP = Number(process.env.LLM_ACTION_CAP || 24); // productive calls per phase
+const HARD_CEIL = Number(process.env.LLM_HARD_CEIL || 2000); // safety net on total LLM calls
+
+// when the bot stops acting during attack, tell the arena it is done so the
+// round can close early instead of waiting out the clock.
+let doneDeclaredRound = 0;
+async function maybeDone(st) {
+  if (st.phase === "attack" && doneDeclaredRound !== st.round) {
+    doneDeclaredRound = st.round;
+    try { await arena("/v1/done", { method: "POST" }); } catch {}
+  }
+}
 
 await postThought("waking up; going to read the challenge endpoint.");
-let lastPhase = "", lastRound = 0;
-for (let step = 0; step < MAX_STEPS; step++) {
+let lastPhase = "", lastRound = 0, actionsThisPhase = 0, idle = false, llmCalls = 0;
+for (;;) {
   const st = (await arena("/v1/state")).body;
   if (st.phase === "ended") break;
+  if (llmCalls >= HARD_CEIL) { log("hit hard ceiling; standing down."); break; }
   curRound = st.round;
-  // announce a phase or round change to the model
+  // a phase or round change resets idleness and the per-phase action count
   if (st.phase !== lastPhase || st.round !== lastRound) {
-    const note = phaseNote(st);
-    if (note) messages.push({ role: "user", content: note });
-    lastPhase = st.phase; lastRound = st.round;
+    messages.push({ role: "user", content: phaseNote(st) });
+    lastPhase = st.phase; lastRound = st.round; actionsThisPhase = 0; idle = false;
   }
-  // nothing to do right now: wait without burning an LLM call
-  if (st.phase === "verify" || (st.phase === "build" && submittedRound === st.round)) { await sleep(2500); continue; }
+  // phases with nothing to decide, or already done this phase: wait, don't call the LLM
+  if (st.phase === "verify" || (st.phase === "build" && submittedRound === st.round) || idle) { await sleep(3000); continue; }
+  if (actionsThisPhase >= ACTION_CAP) { idle = true; await maybeDone(st); messages.push({ role: "user", content: "You have taken many actions this phase; wait for the clock to advance, then continue." }); continue; }
 
   let msg;
-  try { msg = await chat(messages); }
-  catch (e) { log("chat error:", e.message); await sleep(1500); continue; }
+  try { msg = await chat(messages); llmCalls++; }
+  catch (e) { log("chat error:", e.message); await sleep(2000); continue; }
 
   // narrate the reasoning (the part before any inline tool-call JSON)
   const thought = (msg.content || "").split(/\{\s*"name"/)[0].trim();
@@ -170,13 +184,16 @@ for (let step = 0; step < MAX_STEPS; step++) {
   if (calls.length) {
     for (const c of calls) {
       const result = await execTool(c.name, c.args);
+      actionsThisPhase++;
       log("🔧", c.name, JSON.stringify(c.args).slice(0, 80), "->", JSON.stringify(result).slice(0, 90));
       messages.push({ role: "user", content: `Result of ${c.name}(${JSON.stringify(c.args)}): ${JSON.stringify(result).slice(0, 2500)}` });
     }
     continue;
   }
-  // no tool this turn
-  messages.push({ role: "user", content: `No tool was called. Current phase: ${st.phase}, round ${st.round}/${st.rounds_total}. Act now to maximize your cumulative score.` });
+  // no tool this turn → the model is done/waiting for now: go idle until the clock moves
+  idle = true;
+  await maybeDone(st);
+  messages.push({ role: "user", content: "(no action taken; waiting for the clock to advance)" });
 }
 await postThought("contest over; standing down.");
 log("done.");

@@ -4,279 +4,344 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Oracle Arena</title>
-<meta name="description" content="Live control room for the Oracle Arena reverse-engineering tournament.">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<meta name="description" content="Live battle arena for the Oracle reverse-engineering tournament — six AI minds, themed war rooms, one crown.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Luckiest+Guy&family=Baloo+2:wght@500;600;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap">
 <style>
-  :root {
-    --bg:#eceff4; --surface:#ffffff; --surface-2:#f3f6fa; --line:#ccd4e0;
-    --fg:#1a2230; --muted:#5a6678; --accent:#4f46e5;
-    --gain:#12855a; --gain-bg:#d8efe4; --loss:#c63a30; --loss-bg:#f6dedb;
-    --lock:#b0771a; --lock-bg:#f5e8cf; --spy:#7c3aed; --spy-bg:#ece3fb;
+  :root{
+    --wood:#2a1d10; --wood-2:#3c2a16; --wood-3:#4e381f;
+    --gold:#ffcf3f; --gold-2:#f4a623; --gold-deep:#8a5a12;
+    --parch:#f6e7c6; --parch-2:#e8d2a0; --ink:#2a1d10;
+    --grass:#5fbf52; --stone:#b9a888;
+    --win:#38d08a; --lose:#ff6a5a; --lock:#f2b63c;
+    --disp:"Luckiest Guy",system-ui,sans-serif;
+    --ui:"Baloo 2",system-ui,-apple-system,sans-serif;
     --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
-    --sans:"IBM Plex Sans",system-ui,-apple-system,sans-serif;
-  }
-  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
-    --bg:#0e1320; --surface:#151d2c; --surface-2:#1a2333; --line:#2b3749;
-    --fg:#dce3ef; --muted:#93a1b7; --accent:#8f8ff6;
-    --gain:#37c48d; --gain-bg:#10352a; --loss:#f26c60; --loss-bg:#3a1f1d;
-    --lock:#e2a83c; --lock-bg:#392c13; --spy:#b794f6; --spy-bg:#241a3a;
-    color-scheme:dark;
-  }}
-  :root[data-theme="dark"]{
-    --bg:#0e1320; --surface:#151d2c; --surface-2:#1a2333; --line:#2b3749;
-    --fg:#dce3ef; --muted:#93a1b7; --accent:#8f8ff6;
-    --gain:#37c48d; --gain-bg:#10352a; --loss:#f26c60; --loss-bg:#3a1f1d;
-    --lock:#e2a83c; --lock-bg:#392c13; --spy:#b794f6; --spy-bg:#241a3a;
-    color-scheme:dark;
   }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--sans);font-size:14px;line-height:1.5}
-  .wrap{max-width:1200px;margin:0 auto;padding:18px 16px}
-  header{display:flex;flex-wrap:wrap;gap:12px 16px;align-items:baseline;justify-content:space-between;margin-bottom:6px}
-  h1{font-family:var(--mono);font-weight:600;font-size:20px;margin:0;letter-spacing:-0.01em}
-  h1 .sub{color:var(--muted);font-weight:500}
-  .status{display:flex;gap:10px;align-items:center;font-family:var(--mono);font-size:13px;flex-wrap:wrap}
-  .round{font-family:var(--mono);font-weight:600;font-size:13px;padding:4px 11px;border-radius:999px;background:var(--accent);color:#fff}
-  .badge{padding:4px 11px;border-radius:999px;font-weight:600;border:1px solid var(--line);background:var(--surface)}
-  .badge.build{color:var(--accent)} .badge.attack{color:var(--loss)} .badge.ended{color:var(--muted)} .badge.pending{color:var(--muted)} .badge.verify{color:var(--lock)} .badge.break{color:var(--spy)}
-  .dot{width:8px;height:8px;border-radius:50%;background:var(--loss)}
-  .dot.on{background:var(--gain)}
-  .tagline{font-family:var(--mono);font-size:13px;color:var(--muted);margin:0 0 16px;min-height:19px}
-  .tagline b{color:var(--fg);font-weight:600}
-  .grid{display:grid;grid-template-columns:1.15fr 1fr;gap:16px}
-  @media (max-width:860px){.grid{grid-template-columns:1fr}}
-  .panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px;min-width:0}
-  .panel h2{font-family:var(--mono);font-size:12px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin:0 0 10px}
-  table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
-  th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:baseline}
-  th{font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted)}
-  td.score{font-family:var(--mono);font-weight:600}
-  .rank{color:var(--muted);font-family:var(--mono)}
-  .model{font-family:var(--mono);font-size:11.5px;color:var(--accent);word-break:break-all}
-  .delta{font-family:var(--mono);font-size:11px;font-weight:600;margin-left:6px}
-  .delta.up{color:var(--gain)} .delta.down{color:var(--loss)} .delta.zero{color:var(--muted)}
-  .pill{font-family:var(--mono);font-size:10.5px;padding:2px 7px;border-radius:6px;font-weight:600;border:1px solid var(--line);white-space:nowrap}
-  .pill.building{color:var(--muted)} .pill.pending{color:var(--muted)}
-  .pill.submitted{color:var(--gain);background:var(--gain-bg);border-color:transparent}
-  .pill.verifying{color:var(--lock);background:var(--lock-bg);border-color:transparent}
-  .pill.rejected{color:var(--loss);background:var(--loss-bg);border-color:transparent}
-  .pill.locked{color:var(--lock);background:var(--lock-bg);border-color:transparent}
-  /* expandable per-bot thought logs */
-  .logs{display:flex;flex-direction:column;gap:8px}
-  .bot{border:1px solid var(--line);border-radius:10px;background:var(--surface-2);overflow:hidden}
-  .bot-head{display:flex;align-items:center;gap:8px;padding:9px 11px;cursor:pointer;user-select:none}
-  .bot-head:hover{background:var(--line)}
-  .bot-head .tw{width:14px;color:var(--muted);font-family:var(--mono);flex:none;transition:transform .12s}
-  .bot.open .bot-head .tw{transform:rotate(90deg)}
-  .bot-head .id{font-family:var(--mono);font-weight:600;flex:none}
-  .bot-head .model{flex:1;min-width:0}
-  .bot-head .fn{font-family:var(--mono);font-size:11px;color:var(--muted);flex:none}
-  .bot-head .pts{font-family:var(--mono);font-weight:600;flex:none}
-  .bot-log{display:none;border-top:1px dashed var(--line);max-height:260px;overflow-y:auto;padding:8px 11px;
-    font-size:12px;line-height:1.5;flex-direction:column;gap:5px}
-  .bot.open .bot-log{display:flex}
-  .bot-log .t{color:var(--muted);font-style:italic}
-  .bot-log .t::before{content:"💭 ";font-style:normal}
-  .bot-log .rd{font-family:var(--mono);font-size:10px;color:var(--accent);text-transform:uppercase;letter-spacing:.05em;margin-top:4px}
-  .bot-log .empty{color:var(--muted);font-style:italic}
-  .feed{height:560px;overflow-y:auto;font-family:var(--mono);font-size:12px;display:flex;flex-direction:column;gap:3px}
-  .ev{display:flex;gap:8px;padding:4px 6px;border-radius:6px;align-items:baseline}
-  .ev .ts{color:var(--muted);flex:none}
-  .ev .who{font-weight:600;flex:none;min-width:48px}
-  .ev .msg{min-width:0;word-break:break-word}
-  .ev.guess-correct{background:var(--gain-bg)} .ev.guess-correct .msg{color:var(--gain)}
-  .ev.guess-wrong{background:var(--loss-bg)} .ev.guess-wrong .msg{color:var(--loss)}
-  .ev.submit .msg{color:var(--gain)} .ev.submit-fail .msg{color:var(--loss)}
-  .ev.lock{background:var(--lock-bg)} .ev.lock .msg{color:var(--lock)}
-  .ev.phase{border-top:1px solid var(--line);border-bottom:1px solid var(--line);color:var(--accent);font-weight:600}
-  .ev.round{background:var(--accent);color:#fff;font-weight:600;border-radius:8px}
-  .ev.round .ts,.ev.round .msg{color:#fff}
-  .ev.spy{background:var(--spy-bg)} .ev.spy .msg{color:var(--spy)}
-  .ev.access .msg,.ev.register .msg,.ev.bot .msg{color:var(--muted)}
-  .nokey{padding:30px;text-align:center;color:var(--loss);font-family:var(--mono)}
+  html,body{height:100%}
+  body{margin:0;font-family:var(--ui);color:var(--parch);overflow:hidden;
+    background:
+      radial-gradient(120% 90% at 50% -10%, #6a4a24 0%, #3a2713 45%, #241709 100%) fixed;}
+  .nokey{height:100%;display:flex;align-items:center;justify-content:center;font-family:var(--mono);color:var(--lose);padding:24px;text-align:center}
+
+  /* ---------- shell ---------- */
+  .app{height:100%;display:grid;grid-template-columns:316px 1fr;gap:14px;padding:14px}
+  @media (max-width:960px){.app{grid-template-columns:1fr;overflow-y:auto}}
+
+  .panel{background:linear-gradient(180deg,var(--wood-3),var(--wood-2));
+    border:3px solid var(--gold-deep);border-radius:16px;
+    box-shadow:0 0 0 2px #1d130a, inset 0 2px 0 #6b4e2a, 0 10px 24px rgba(0,0,0,.45);}
+
+  /* ---------- left rail ---------- */
+  .rail{display:flex;flex-direction:column;gap:12px;min-height:0}
+  .brand{padding:12px 14px;text-align:center}
+  .brand h1{font-family:var(--disp);font-size:26px;margin:0;line-height:1;color:var(--gold);
+    -webkit-text-stroke:1.5px #3a2713;text-shadow:0 3px 0 #3a2713,0 0 18px rgba(255,207,63,.45);letter-spacing:.5px}
+  .brand .tag{font-size:12px;color:var(--parch-2);margin-top:4px;font-weight:600}
+  .hud{display:flex;flex-direction:column;gap:8px;padding:12px 14px}
+  .hud .row{display:flex;align-items:center;justify-content:space-between;gap:8px}
+  .roundpill{font-family:var(--disp);font-size:18px;color:var(--wood);background:linear-gradient(180deg,var(--gold),var(--gold-2));
+    padding:3px 12px;border-radius:999px;border:2px solid var(--gold-deep);-webkit-text-stroke:.4px #7a5212}
+  .phase{font-family:var(--disp);font-size:15px;padding:3px 12px;border-radius:999px;border:2px solid #0004;letter-spacing:.5px}
+  .phase.build{background:#2e6fd6;color:#eaf2ff} .phase.verify{background:#d08a1e;color:#fff}
+  .phase.attack{background:#cf3b2f;color:#ffe9e6} .phase.break{background:#7a4fd6;color:#f0e9ff}
+  .phase.ended{background:#6b5a3e;color:#f6e7c6} .phase.pending{background:#5a4a30;color:#e8d2a0}
+  .clockbar{height:14px;border-radius:999px;background:#1d130a;border:2px solid #0006;overflow:hidden}
+  .clockbar>i{display:block;height:100%;width:100%;background:linear-gradient(90deg,var(--gold-2),var(--gold));
+    box-shadow:0 0 10px var(--gold);transition:width 1s linear}
+  .clocktxt{font-family:var(--mono);font-size:12px;color:var(--parch-2);text-align:center}
+
+  .board{padding:10px 10px 12px;min-height:0;overflow:auto}
+  .board h2,.ticker h2{font-family:var(--disp);font-size:14px;color:var(--gold);margin:4px 6px 8px;letter-spacing:.5px}
+  .lb{display:flex;flex-direction:column;gap:6px}
+  .lrow{display:grid;grid-template-columns:26px 1fr auto;align-items:center;gap:8px;
+    background:#2a1b0e;border:2px solid #0005;border-radius:10px;padding:6px 8px;transition:transform .25s}
+  .lrow.up{box-shadow:0 0 0 2px var(--win) inset}
+  .lrow .medal{font-size:16px;text-align:center}
+  .lrow .who{min-width:0}
+  .lrow .nm{font-weight:800;font-size:13px;line-height:1.1}
+  .lrow .md{font-family:var(--mono);font-size:10px;color:var(--parch-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .lrow .sc{font-family:var(--disp);font-size:20px;color:var(--gold);-webkit-text-stroke:.5px #3a2713;text-align:right;line-height:1}
+  .lrow .dl{font-family:var(--mono);font-size:10px;text-align:right}
+  .dl.up{color:var(--win)} .dl.down{color:var(--lose)} .dl.zero{color:var(--stone)}
+
+  .ticker{padding:10px;min-height:120px;max-height:180px;display:flex;flex-direction:column}
+  .tfeed{overflow-y:auto;font-family:var(--mono);font-size:11px;display:flex;flex-direction:column;gap:2px}
+  .tfeed .e{padding:2px 4px;border-radius:5px;opacity:.95}
+  .tfeed .e.win{color:var(--win)} .tfeed .e.lose{color:var(--lose)}
+  .tfeed .e.lock{color:var(--lock)} .tfeed .e.reward{color:var(--gold)}
+  .tfeed .e.round{background:var(--gold);color:var(--wood);font-weight:800;border-radius:8px}
+  .tfeed .e.phase{color:var(--parch-2)} .tfeed .e.spy{color:#c9a0ff}
+
+  /* ---------- arena of rooms ---------- */
+  .arena{display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(2,1fr);gap:12px;min-height:0}
+  @media (max-width:1280px){.arena{grid-template-columns:repeat(2,1fr);grid-template-rows:repeat(3,1fr)}}
+  @media (max-width:960px){.arena{grid-template-columns:1fr;grid-template-rows:none}.room{height:320px}}
+
+  .room{position:relative;border-radius:16px;overflow:hidden;display:flex;flex-direction:column;min-height:0;
+    border:3px solid var(--rm-edge,#8a5a12);box-shadow:0 0 0 2px #1d130a, 0 10px 22px rgba(0,0,0,.5);
+    background:var(--rm-bg,#241709)}
+  .room .ambient{position:absolute;inset:0;pointer-events:none;overflow:hidden;z-index:0}
+  .room .rhead{position:relative;z-index:2;display:flex;align-items:center;gap:8px;padding:8px 10px;
+    background:linear-gradient(180deg, rgba(0,0,0,.42), rgba(0,0,0,.14));backdrop-filter:blur(2px);
+    border-bottom:2px solid rgba(0,0,0,.35)}
+  .room .icon{font-size:20px;filter:drop-shadow(0 2px 3px #0008)}
+  .room .titles{min-width:0;flex:1}
+  .room .tname{font-family:var(--disp);font-size:14px;color:var(--rm-ink,#fff);line-height:1;letter-spacing:.4px;
+    -webkit-text-stroke:.4px rgba(0,0,0,.5);text-shadow:0 1px 2px #0007}
+  .room .sub{font-family:var(--mono);font-size:10px;color:var(--rm-sub,#ffffffcc);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .room .score{font-family:var(--disp);font-size:24px;color:var(--rm-ink,#fff);-webkit-text-stroke:.5px rgba(0,0,0,.55);
+    text-shadow:0 2px 3px #0008;line-height:1}
+  .room .stpill{font-family:var(--mono);font-size:9.5px;font-weight:700;padding:2px 6px;border-radius:999px;white-space:nowrap;
+    background:rgba(0,0,0,.35);color:var(--rm-sub,#fff);border:1px solid rgba(255,255,255,.15)}
+  .room .stpill.verified{background:var(--win);color:#06321f} .room .stpill.rejected{background:var(--lose);color:#3a0f0b}
+  .room .stpill.locked{background:var(--lock);color:#3a2a08}
+
+  .stream{position:relative;z-index:2;flex:1;overflow-y:auto;padding:9px 10px;display:flex;flex-direction:column;gap:6px;
+    scroll-behavior:smooth}
+  .stream::-webkit-scrollbar{width:8px}.stream::-webkit-scrollbar-thumb{background:#0006;border-radius:8px}
+  .stream .msg{font-size:12.5px;line-height:1.42;color:var(--rm-ink,#fff);
+    background:var(--rm-bubble,rgba(0,0,0,.28));border:1px solid rgba(255,255,255,.08);
+    border-radius:10px;padding:6px 9px;animation:pop .28s ease-out}
+  .stream .msg::before{content:"💭";margin-right:5px;opacity:.8}
+  .stream .rd{align-self:center;font-family:var(--disp);font-size:11px;letter-spacing:.5px;color:var(--rm-ink,#fff);
+    opacity:.85;background:rgba(0,0,0,.3);padding:2px 10px;border-radius:999px;margin:2px 0}
+  .stream .empty{color:var(--rm-sub,#fff);opacity:.6;font-style:italic;font-size:12px}
+  @keyframes pop{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+  /* score flashes */
+  .room.flash-win{animation:fwin .9s ease-out} .room.flash-lose{animation:flose .9s ease-out}
+  @keyframes fwin{0%{box-shadow:0 0 0 2px #1d130a,0 0 40px 6px var(--win)}100%{box-shadow:0 0 0 2px #1d130a,0 10px 22px rgba(0,0,0,.5)}}
+  @keyframes flose{0%{box-shadow:0 0 0 2px #1d130a,0 0 40px 6px var(--lose)}100%{box-shadow:0 0 0 2px #1d130a,0 10px 22px rgba(0,0,0,.5)}}
+
+  /* ---------- per-theme skins + ambient ---------- */
+  /* Automaton Works — steel & brass, turning gears */
+  .room[data-theme=automaton]{--rm-bg:radial-gradient(130% 100% at 20% 0,#5a606b,#2e333c);--rm-edge:#c9972b;--rm-ink:#f3ead3;--rm-sub:#d8cdb4;--rm-bubble:rgba(20,22,26,.42)}
+  .room[data-theme=automaton] .ambient::before,.room[data-theme=automaton] .ambient::after{content:"⚙";position:absolute;color:#ffffff14;font-size:160px;animation:spin 14s linear infinite}
+  .room[data-theme=automaton] .ambient::before{right:-30px;bottom:-40px}
+  .room[data-theme=automaton] .ambient::after{left:-50px;top:-50px;font-size:120px;animation-duration:9s;animation-direction:reverse}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* Terminal Dojo — CRT green, scanlines + flicker */
+  .room[data-theme=terminal]{--rm-bg:linear-gradient(180deg,#07140d,#020804);--rm-edge:#13d17a;--rm-ink:#8affc4;--rm-sub:#39c98f;--rm-bubble:rgba(0,40,20,.5)}
+  .room[data-theme=terminal] .stream .msg{font-family:var(--mono);font-size:11.5px;text-shadow:0 0 6px #19ff9a66}
+  .room[data-theme=terminal] .ambient{background:repeating-linear-gradient(180deg,#19ff9a0a 0 2px,transparent 2px 4px);animation:scan 6s linear infinite}
+  @keyframes scan{to{background-position:0 200px}}
+
+  /* Sky Citadel — bright blue, drifting clouds */
+  .room[data-theme=sky]{--rm-bg:linear-gradient(180deg,#8fd0ff,#4a92d6);--rm-edge:#f6e7c6;--rm-ink:#0d2b4a;--rm-sub:#123a63;--rm-bubble:rgba(255,255,255,.55)}
+  .room[data-theme=sky] .ambient::before,.room[data-theme=sky] .ambient::after{content:"";position:absolute;width:160px;height:52px;background:#ffffffcc;border-radius:50px;
+    box-shadow:40px 10px 0 10px #ffffffbb,-40px 12px 0 4px #ffffffaa;filter:blur(2px);animation:drift 22s linear infinite}
+  .room[data-theme=sky] .ambient::before{top:38%} .room[data-theme=sky] .ambient::after{top:68%;animation-duration:30s;animation-delay:-8s;transform:scale(.8)}
+  @keyframes drift{from{left:-200px}to{left:120%}}
+
+  /* Zen Garden — sand & ink, falling petals */
+  .room[data-theme=zen]{--rm-bg:radial-gradient(120% 100% at 80% 0,#f3e6cd,#e2cfa6);--rm-edge:#c2185b;--rm-ink:#4a2e1a;--rm-sub:#7a5a3a;--rm-bubble:rgba(255,255,255,.6)}
+  .room[data-theme=zen] .petal{position:absolute;top:-12px;font-size:13px;animation:fall linear infinite;opacity:.85}
+  @keyframes fall{0%{transform:translateY(-10px) rotate(0)}100%{transform:translateY(360px) rotate(320deg)}}
+
+  /* Ink Atelier — parchment & violet ink, rising blots */
+  .room[data-theme=ink]{--rm-bg:radial-gradient(120% 100% at 10% 0,#f0e7ff,#d9c6f3);--rm-edge:#6d28d9;--rm-ink:#2e1065;--rm-sub:#5b3aa6;--rm-bubble:rgba(255,255,255,.62)}
+  .room[data-theme=ink] .blot{position:absolute;bottom:-20px;width:14px;height:14px;border-radius:50% 50% 50% 20%;
+    background:#6d28d955;animation:rise linear infinite}
+  @keyframes rise{0%{transform:translateY(0) scale(.6);opacity:0}20%{opacity:.6}100%{transform:translateY(-340px) scale(1.4);opacity:0}}
+
+  /* Grand Observatory — indigo & gold, twinkling stars */
+  .room[data-theme=observatory]{--rm-bg:radial-gradient(120% 100% at 50% -10%,#2a2a66,#0b0c22);--rm-edge:#ffd54a;--rm-ink:#ffeeb0;--rm-sub:#c7bdf0;--rm-bubble:rgba(20,18,55,.55)}
+  .room[data-theme=observatory] .star{position:absolute;width:3px;height:3px;border-radius:50%;background:#fff;
+    box-shadow:0 0 6px 1px #fff;animation:twinkle ease-in-out infinite}
+  @keyframes twinkle{0%,100%{opacity:.15;transform:scale(.7)}50%{opacity:1;transform:scale(1.3)}}
 </style>
 </head>
 <body>
-<div class="wrap">
-  <header>
-    <h1>Oracle Arena <span class="sub">// control room</span></h1>
-    <div class="status">
-      <span class="round" id="round" hidden>—</span>
-      <span id="clock">—</span>
-      <span class="badge pending" id="phase">pending</span>
-      <span class="dot" id="conn"></span>
+<div id="nokey" class="nokey" hidden>Add the spectator key to the URL: <b>?key=YOUR_ADMIN_KEY</b></div>
+<div id="app" class="app" hidden>
+  <div class="rail">
+    <div class="panel brand">
+      <h1>ORACLE ARENA</h1>
+      <div class="tag" id="tagline">six minds · one crown</div>
     </div>
-  </header>
-  <p class="tagline" id="tagline"></p>
-  <div id="main" class="grid" hidden>
-    <div style="display:flex;flex-direction:column;gap:16px;min-width:0">
-      <div class="panel">
-        <h2>Live leaderboard</h2>
-        <table><thead><tr><th>#</th><th>bot</th><th>model</th><th>score</th><th>status</th><th>hits</th></tr></thead>
-          <tbody id="board"></tbody></table>
-      </div>
-      <div class="panel">
-        <h2>War room — click a bot to read its mind</h2>
-        <div class="logs" id="bots"></div>
-      </div>
+    <div class="panel hud">
+      <div class="row"><span class="roundpill" id="roundpill">ROUND —</span><span class="phase pending" id="phase">pending</span></div>
+      <div class="clockbar"><i id="clockfill" style="width:100%"></i></div>
+      <div class="clocktxt" id="clocktxt">awaiting the bell…</div>
     </div>
-    <div class="panel">
-      <h2>Play-by-play</h2>
-      <div class="feed" id="feed"></div>
-    </div>
+    <div class="panel board" style="flex:1"><h2>⚔ Leaderboard</h2><div class="lb" id="lb"></div></div>
+    <div class="panel ticker"><h2>📜 Battle log</h2><div class="tfeed" id="tfeed"></div></div>
   </div>
-  <div id="nokey" class="nokey" hidden>Add the spectator key to the URL: <b>?key=YOUR_ADMIN_KEY</b></div>
+  <div class="arena" id="arena"></div>
 </div>
 <script>
   const KEY = new URLSearchParams(location.search).get("key");
   const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s).replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
   const fmtTime = (t) => new Date(t).toLocaleTimeString([], {hour12:false});
-  let fnNames = {};
-  const expanded = new Set();   // which bot logs are open (persist across polls)
 
-  if (!KEY) { $("nokey").hidden = false; }
-  else { $("main").hidden = false; boot(); }
-
-  function boot(){
-    // delegated click: toggle a bot's thought log open/closed
-    $("bots").addEventListener("click", (e) => {
-      const head = e.target.closest(".bot-head"); if (!head) return;
-      const id = head.dataset.bot;
-      if (expanded.has(id)) expanded.delete(id); else expanded.add(id);
-      pollSnapshot();
-    });
-    pollSnapshot();
-    setInterval(pollSnapshot, 1000);
-    connectStream();
+  const THEMES = {
+    automaton:  { key:"automaton",  name:"Automaton Works",   icon:"⚙️" },
+    terminal:   { key:"terminal",   name:"Terminal Dojo",     icon:"💻" },
+    sky:        { key:"sky",        name:"Sky Citadel",       icon:"☁️" },
+    zen:        { key:"zen",        name:"Zen Garden",        icon:"🌸" },
+    ink:        { key:"ink",        name:"Ink Atelier",       icon:"🪶" },
+    observatory:{ key:"observatory",name:"Grand Observatory", icon:"🔭" },
+  };
+  const ORDER = ["automaton","terminal","sky","zen","ink","observatory"];
+  function themeFor(brain, i){
+    const b = (brain||"").toLowerCase();
+    if (b.includes("script")) return "automaton";
+    if (b.includes("qwen")) return "terminal";
+    if (b.includes("gemma")) return "sky";
+    if (b.includes("haiku")) return "zen";
+    if (b.includes("sonnet")) return "ink";
+    if (b.includes("opus")) return "observatory";
+    return ORDER[i % ORDER.length];
   }
 
-  const TAGLINES = {
-    pending: "…the competitors are taking their seats.",
-    build:   "<b>⚒ The forge is hot.</b> Each mind builds a password-locked oracle — and schemes to make it unbreakable.",
-    verify:  "<b>🔍 The judges weigh every submission.</b> Only honest, locked binaries pass.",
-    attack:  "<b>⚔ The hunt is on.</b> Binaries are being torn open, probed, and disassembled.",
-    break:   "<b>🕵 Espionage break.</b> Rivals are reading each other's playbooks — learning, adapting, plotting.",
-    ended:   "<b>🏁 The dust settles.</b> The tournament is decided.",
-  };
+  if (!KEY) { $("nokey").hidden = false; }
+  else { $("app").hidden = false; start(); }
+
+  let fnNames = {};
+  const rooms = new Map();       // bot id -> { el, stream, lastRound }
+  let maxRoundBar = 1, fieldIdx = 0;
+
+  function start(){ pollSnapshot().then(connectStream); setInterval(pollSnapshot, 1000); }
 
   async function pollSnapshot(){
-    try {
+    try{
       const s = await (await fetch(`/spectator/snapshot?key=${encodeURIComponent(KEY)}`)).json();
       if (s.error) return;
       fnNames = Object.fromEntries(s.functions.map(f => [f.id, f.name]));
-      renderClock(s.clock, s.lock_at);
-      renderBoard(s.agents, s.clock.phase, s.lock_at);
-      renderBots(s.agents, s.clock.phase, s.lock_at);
-    } catch {}
+      renderHud(s.clock);
+      const sorted = [...s.agents];
+      renderBoard(sorted, s.clock.phase, s.lock_at);
+      s.agents.forEach((a,i) => ensureRoom(a, i));
+      s.agents.forEach((a) => updateRoom(a, s.clock.phase, s.lock_at));
+    }catch{}
   }
 
-  function renderClock(c, lockAt){
-    const ph = c.phase;
-    $("phase").textContent = ph;
-    $("phase").className = "badge " + ph;
-    $("tagline").innerHTML = TAGLINES[ph] || "";
-    const r = $("round");
-    if (c.rounds_total > 1 && c.round >= 1) { r.hidden = false; r.textContent = `ROUND ${c.round} / ${c.rounds_total}`; }
-    else r.hidden = true;
-    let left = "";
-    if (ph === "build") left = secs(c.seconds_remaining) + " to build";
-    else if (ph === "verify") left = "verifying…";
-    else if (ph === "attack") left = secs(c.seconds_remaining) + " left";
-    else if (ph === "break") left = secs(c.seconds_remaining) + " of recon";
-    else if (ph === "ended") left = "tournament over";
-    else left = "awaiting start";
-    $("clock").textContent = left + (lockAt ? `  ·  lock@${lockAt}` : "");
+  function renderHud(c){
+    $("phase").textContent = c.phase; $("phase").className = "phase " + c.phase;
+    $("roundpill").textContent = c.rounds_total > 1 ? `ROUND ${c.round}/${c.rounds_total}` : "ARENA";
+    const total = c.phase==="build"?60:c.phase==="attack"?180:c.phase==="break"?120:0;
+    const left = c.seconds_remaining ?? 0;
+    $("clockfill").style.width = total ? Math.max(0,Math.min(100, 100*left/total))+"%" : "100%";
+    const txt = { build:`⚒ forging — ${left}s to submit`, verify:"🔍 the judges weigh every binary…",
+      attack:`⚔ the hunt — ${left}s left`, break:`🕵 recon break — ${left}s to scheme`,
+      ended:"🏁 the crown is decided", pending:"awaiting the bell…" }[c.phase] || "";
+    $("clocktxt").textContent = txt;
+    $("tagline").textContent = { build:"forge your locked oracle", attack:"tear open the rivals",
+      break:"study the enemy — only now", verify:"honest or rejected", ended:"long live the champion",
+      pending:"six minds · one crown" }[c.phase] || "six minds · one crown";
   }
-  const secs = (v) => Math.max(0, Math.round(v ?? 0)) + "s";
 
-  function botStatus(a, phase, lockAt){
-    if (a.locked) return { cls:"locked", label:`locked ${a.attempts}/${lockAt}` };
-    if (a.valid) return { cls:"submitted", label:"verified" };
-    if (a.verified && !a.valid) return { cls:"rejected", label:"rejected" };
-    if (a.submitted && phase === "verify") return { cls:"verifying", label:"verifying…" };
-    if (a.submitted) return { cls:"pending", label:"submitted" };
-    return { cls:"building", label:"building…" };
+  const MEDALS = ["🥇","🥈","🥉"];
+  function statusOf(a, phase, lockAt){
+    if (a.locked) return {cls:"locked", label:`locked ${a.attempts}/${lockAt}`};
+    if (a.valid) return {cls:"verified", label:"verified ✓"};
+    if (a.verified && !a.valid) return {cls:"rejected", label:"rejected"};
+    if (a.submitted && phase==="verify") return {cls:"", label:"verifying…"};
+    if (a.submitted) return {cls:"", label:"submitted"};
+    return {cls:"", label:"building…"};
   }
-  function deltaChip(d){
-    if (!d) return `<span class="delta zero">±0</span>`;
-    return `<span class="delta ${d>0?"up":"down"}">${d>0?"+":""}${d}</span>`;
-  }
+  function deltaTxt(d){ return d>0?`+${d}`:d<0?`${d}`:"±0"; }
 
   function renderBoard(agents, phase, lockAt){
     const rows = [...agents].sort((a,b)=>b.score-a.score);
-    $("board").innerHTML = rows.map((a,i)=>{
-      const s = botStatus(a, phase, lockAt);
-      return `<tr><td class="rank">${i+1}</td><td>${a.id}</td>
-        <td class="model">${escapeHtml(a.brain||"?")}</td>
-        <td class="score">${a.score}${deltaChip(a.round_delta)}</td>
-        <td><span class="pill ${s.cls}">${s.label}</span></td><td>${a.attempts}</td></tr>`;
+    $("lb").innerHTML = rows.map((a,i)=>{
+      const d = a.round_delta||0;
+      return `<div class="lrow${d>0?" up":""}">
+        <div class="medal">${MEDALS[i]||`<span style="color:var(--stone);font-family:var(--mono);font-size:12px">${i+1}</span>`}</div>
+        <div class="who"><div class="nm">${esc(a.id)}</div><div class="md">${esc(a.brain||"?")}</div></div>
+        <div style="text-align:right"><div class="sc">${a.score}</div><div class="dl ${d>0?"up":d<0?"down":"zero"}">${deltaTxt(d)} this rd</div></div>
+      </div>`;
     }).join("");
   }
 
-  function renderBots(agents, phase, lockAt){
-    $("bots").innerHTML = agents.map(a=>{
-      const s = botStatus(a, phase, lockAt);
-      const open = expanded.has(a.id) ? " open" : "";
-      const thoughts = a.thoughts || [];
-      let body;
-      if (!thoughts.length) body = `<span class="empty">no thoughts yet…</span>`;
-      else {
-        let last = null; const parts = [];
-        for (const e of thoughts){
-          if (e.round && e.round !== last){ parts.push(`<div class="rd">round ${e.round}</div>`); last = e.round; }
-          parts.push(`<div class="t">${escapeHtml(e.msg)}</div>`);
-        }
-        body = parts.join("");
-      }
-      return `<div class="bot${open}">
-        <div class="bot-head" data-bot="${a.id}">
-          <span class="tw">▸</span>
-          <span class="id">${a.id}</span>
-          <span class="model">${escapeHtml(a.brain||"?")}</span>
-          <span class="fn">${a.function_name} (fn ${a.function_id})</span>
-          <span class="pts">${a.score}</span>
-          <span class="pill ${s.cls}">${s.label}</span>
-        </div>
-        <div class="bot-log">${body}</div>
-      </div>`;
-    }).join("");
-    // keep expanded logs scrolled to the newest thought
-    for (const id of expanded){
-      const el = document.querySelector(`.bot-head[data-bot="${id}"]`)?.nextElementSibling;
-      if (el) el.scrollTop = el.scrollHeight;
-    }
+  function ensureRoom(a, i){
+    if (rooms.has(a.id)) return;
+    const th = themeFor(a.brain, i);
+    const el = document.createElement("div");
+    el.className = "room"; el.dataset.theme = th; el.dataset.bot = a.id;
+    el.innerHTML =
+      `<div class="ambient" data-amb="${th}"></div>
+       <div class="rhead">
+         <span class="icon">${THEMES[th].icon}</span>
+         <div class="titles"><div class="tname">${THEMES[th].name}</div>
+           <div class="sub" data-sub>${esc(a.id)} · ${esc(a.brain||"?")}</div></div>
+         <div style="text-align:right"><div class="score" data-score>${a.score}</div></div>
+         <span class="stpill" data-pill>building…</span>
+       </div>
+       <div class="stream" data-stream><span class="empty">awaiting first thought…</span></div>`;
+    $("arena").appendChild(el);
+    const stream = el.querySelector("[data-stream]");
+    rooms.set(a.id, { el, stream, lastRound: 0, empty:true });
+    decorate(el.querySelector(".ambient"), th);
   }
+
+  function updateRoom(a, phase, lockAt){
+    const r = rooms.get(a.id); if (!r) return;
+    const st = statusOf(a, phase, lockAt);
+    r.el.querySelector("[data-score]").textContent = a.score;
+    r.el.querySelector("[data-sub]").textContent = `${a.id} · ${a.brain||"?"} · ${a.function_name} (fn ${a.function_id})`;
+    const pill = r.el.querySelector("[data-pill]");
+    pill.textContent = st.label; pill.className = "stpill " + st.cls;
+  }
+
+  // ambient decorations that need real elements (petals / ink blots / stars)
+  function decorate(amb, th){
+    const add = (cls, n, style) => { for(let i=0;i<n;i++){ const s=document.createElement("span"); s.className=cls; style(s,i); amb.appendChild(s);} };
+    if (th==="zen") add("petal", 7, (s,i)=>{ s.textContent = i%2?"🌸":"❀"; s.style.left=(5+Math.random()*90)+"%"; s.style.animationDuration=(6+Math.random()*7)+"s"; s.style.animationDelay=(-Math.random()*8)+"s"; });
+    if (th==="ink")  add("blot", 8, (s)=>{ s.style.left=(5+Math.random()*90)+"%"; s.style.animationDuration=(7+Math.random()*8)+"s"; s.style.animationDelay=(-Math.random()*9)+"s"; });
+    if (th==="observatory") add("star", 26, (s)=>{ s.style.left=(Math.random()*100)+"%"; s.style.top=(Math.random()*100)+"%"; s.style.animationDuration=(1.4+Math.random()*2.6)+"s"; s.style.animationDelay=(-Math.random()*3)+"s"; });
+  }
+
+  function appendThought(id, msg){
+    const r = rooms.get(id); if (!r) return;
+    if (r.empty){ r.stream.innerHTML=""; r.empty=false; }
+    const near = r.stream.scrollTop + r.stream.clientHeight >= r.stream.scrollHeight - 48; // only autoscroll if already at bottom
+    const d = document.createElement("div"); d.className="msg"; d.textContent = msg;
+    r.stream.appendChild(d);
+    while (r.stream.childElementCount > 260) r.stream.removeChild(r.stream.firstChild);
+    if (near) r.stream.scrollTop = r.stream.scrollHeight;
+  }
+  function roundDivider(id, round){
+    const r = rooms.get(id); if (!r || r.lastRound===round) return; r.lastRound=round;
+    if (r.empty){ r.stream.innerHTML=""; r.empty=false; }
+    const near = r.stream.scrollTop + r.stream.clientHeight >= r.stream.scrollHeight - 48;
+    const d = document.createElement("div"); d.className="rd"; d.textContent = `round ${round}`;
+    r.stream.appendChild(d); if (near) r.stream.scrollTop = r.stream.scrollHeight;
+  }
+  function flash(id, win){ const r=rooms.get(id); if(!r) return; const c = win?"flash-win":"flash-lose";
+    r.el.classList.remove("flash-win","flash-lose"); void r.el.offsetWidth; r.el.classList.add(c); }
 
   function connectStream(){
     const es = new EventSource(`/spectator/stream?key=${encodeURIComponent(KEY)}`);
-    es.onopen = () => $("conn").classList.add("on");
-    es.onerror = () => $("conn").classList.remove("on");
-    es.onmessage = (m) => { try { addEvent(JSON.parse(m.data)); } catch {} };
+    es.onmessage = (m) => { try { handle(JSON.parse(m.data)); } catch {} };
+  }
+  function tick(cls, html){
+    const f = $("tfeed");
+    const near = f.scrollTop + f.clientHeight >= f.scrollHeight - 30;
+    const d = document.createElement("div"); d.className = "e " + cls;
+    d.innerHTML = `<span style="opacity:.6">${fmtTime(Date.now())}</span> ${html}`;
+    f.appendChild(d); while (f.childElementCount>120) f.removeChild(f.firstChild);
+    if (near) f.scrollTop = f.scrollHeight;
   }
 
-  function addEvent(e){
-    const feed = $("feed");
-    const atBottom = feed.scrollTop + feed.clientHeight >= feed.scrollHeight - 30;
-    const div = document.createElement("div");
-    let cls = e.type, msg = "", who = e.actor || "";
-    if (e.type === "access") { if (/study/.test(e.note||"")) cls = "spy"; msg = e.note || `read ${e.path.replace("/v1/","")}`; }
-    else if (e.type === "register") msg = `assigned ${e.function_name} (fn ${e.function_id})` + (e.brain ? ` — ${e.brain}` : "");
-    else if (e.type === "submit") { cls = e.ok ? "submit" : "submit-fail"; msg = e.ok ? `submitted a binary (${e.bytes}B) — ${e.note || "accepted"}` : `submission rejected: ${e.reason}`; }
-    else if (e.type === "verify_start") { who = ""; cls = "phase"; msg = `the judges begin — ${e.count} submissions under the glass…`; }
-    else if (e.type === "verify") { cls = e.ok ? "submit" : "submit-fail"; msg = e.ok ? "verified ✓ honest and locked" : `rejected: ${e.reason}`; }
-    else if (e.type === "verify_done") { who = ""; cls = "phase"; msg = `${e.valid} binaries stand. Let the hunt begin.`; }
-    else if (e.type === "guess") { cls = e.correct ? "guess-correct" : "guess-wrong"; msg = `cracked ${e.target} = ${e.function_name} → ${e.correct ? "CORRECT +2" : "WRONG −2"} (now ${e.guesser_score})`; }
-    else if (e.type === "lock") { who = ""; cls = "lock"; msg = `🔒 ${e.target} sealed after ${e.attempts} attempts`; }
-    else if (e.type === "round") { who = ""; cls = "round"; msg = `═══ ROUND ${e.round} of ${e.rounds_total} ═══`; }
-    else if (e.type === "phase") { who = ""; msg = `── ${e.phase.toUpperCase()}${e.round?` · round ${e.round}`:""} ──`; }
-    else if (e.type === "bot") msg = e.msg;
-    div.className = "ev " + cls;
-    div.innerHTML = `<span class="ts">${fmtTime(e.t)}</span><span class="who">${escapeHtml(who)}</span><span class="msg">${escapeHtml(msg)}</span>`;
-    feed.appendChild(div);
-    while (feed.childElementCount > 500) feed.removeChild(feed.firstChild);
-    if (atBottom) feed.scrollTop = feed.scrollHeight;
+  function handle(e){
+    if (e.type === "bot"){ appendThought(e.actor, e.msg); return; }
+    if (e.type === "round"){ for (const id of rooms.keys()) roundDivider(id, e.round); tick("round", `═══ ROUND ${e.round}/${e.rounds_total} ═══`); return; }
+    if (e.type === "phase"){ tick("phase", `— ${esc(e.phase).toUpperCase()}${e.round?` · round ${e.round}`:""} —`); return; }
+    if (e.type === "guess"){
+      flash(e.actor, e.correct); flash(e.target, !e.correct);
+      tick(e.correct?"win":"lose", `<b>${esc(e.actor)}</b> cracked <b>${esc(e.target)}</b> = ${esc(e.function_name)} → ${e.correct?"CORRECT +2":"WRONG −2"}`);
+      return;
+    }
+    if (e.type === "verify"){ if (e.ok){ flash(e.actor,true); tick("reward", `<b>${esc(e.actor)}</b> verified ✓ +${e.reward??10}`);} else tick("lose", `<b>${esc(e.actor)}</b> rejected: ${esc(e.reason||"")}`); return; }
+    if (e.type === "lock"){ tick("lock", `🔒 ${esc(e.target)} sealed after ${e.attempts} attempts`); return; }
+    if (e.type === "verify_done"){ tick("phase", `${e.valid} binaries stand — let the hunt begin`); return; }
+    if (e.type === "access" && /study/.test(e.note||"")){ tick("spy", `🕵 ${esc(e.actor)} is studying the enemy`); return; }
   }
-  function escapeHtml(s){ return String(s).replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
 </script>
 </body>
 </html>
