@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { randomBytes } from "node:crypto";
 import { validateModule } from "../validator/validate.mjs";
 import { fref } from "../validator/functions.mjs";
+import { runExec } from "../sandbox/exec_runner.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
@@ -89,6 +90,33 @@ function spectatorSnapshot() {
       i_guessed: [...a.iGuessed], guessed_by: [...a.guessedBy] })),
   };
 }
+const DOMAIN_MAX = 2147483647;
+function sampleInputs() {
+  const s = [[0, 0], [0, DOMAIN_MAX], [DOMAIN_MAX, 0], [DOMAIN_MAX, DOMAIN_MAX], [1, 1]];
+  for (let i = 0; i < 12; i++) s.push([Math.floor(Math.random() * DOMAIN_MAX), Math.floor(Math.random() * DOMAIN_MAX)]);
+  return s;
+}
+// verify a native/script submission by running it in the sandbox (CLI contract:
+// `prog a b password` -> integer on stdout, or the line WRONG_PASSWORD).
+async function verifyExec(fnId, s) {
+  const inputs = sampleInputs();
+  const pw = String(s.password);
+  const ops = inputs.map(([a, b]) => [a, b, pw]);
+  const wrong = inputs.slice(0, 3).map(([a, b]) => [a, b, pw + "_WRONG"]);
+  const r = await runExec({ lang: s.lang, source: s.source, ops: ops.concat(wrong), timeoutMs: 25000 });
+  if (!r.ok) return { ok: false, reason: r.stage === "compile" ? "compile failed: " + String(r.error || "").slice(0, 120) : (r.reason || r.error || "sandbox error") };
+  const out = r.results || [];
+  for (let i = 0; i < inputs.length; i++) {
+    const [a, b] = inputs[i];
+    const want = String(fref(fnId, BigInt(a), BigInt(b)));
+    if (out[i] !== want) return { ok: false, reason: `output mismatch on (${a},${b}): got ${out[i]}, want ${want}` };
+  }
+  for (let i = 0; i < wrong.length; i++) {
+    if (out[inputs.length + i] !== "WRONG_PASSWORD") return { ok: false, reason: `wrong password not rejected: got ${out[inputs.length + i]}` };
+  }
+  return { ok: true };
+}
+
 // verify each accepted submission after the build deadline, with visible pacing,
 // then open the attack phase.
 async function runVerification() {
@@ -99,9 +127,10 @@ async function runVerification() {
     const s = a.submission;
     let ok = false, reason = "";
     if (s.functionId !== a.functionId) { reason = "declared function is not the one assigned"; }
+    else if (s.kind === "exec") { const v = await verifyExec(a.functionId, s); ok = v.ok; reason = v.reason || ""; }
     else { const v = await validateModule(s.bytes, a.functionId, String(s.password)); ok = v.ok; reason = v.reason || ""; }
     a.valid = ok; a.verified = true;
-    if (ok) writeFileSync(join(PRIVATE_DIR, "binaries", a.binaryName), Buffer.from(s.bytes));
+    if (ok) writeFileSync(join(PRIVATE_DIR, "binaries", a.binaryName), s.kind === "exec" ? Buffer.from(s.source, "utf8") : Buffer.from(s.bytes));
     emit("verify", { actor: a.id, ok, reason });
     saveState();
   }
@@ -240,13 +269,24 @@ const server = createServer(async (req, res) => {
     // accept (and store) up to the hard deadline; legitimacy is checked in the verify phase
     if (phase() !== "build") { emit("submit", { actor: me.id, ok: false, reason: `phase ${phase()}` }); return send(res, 403, { error: `uploads closed (phase: ${phase()})` }); }
     const body = await readBody(req);
-    if (!body || !body.wasm_base64 || body.function_id === undefined || body.password === undefined)
-      return send(res, 400, { error: "need { wasm_base64, function_id, password }" });
-    const bytes = new Uint8Array(Buffer.from(body.wasm_base64, "base64"));
-    me.submission = { bytes, functionId: body.function_id, password: String(body.password) };
-    me.submitted = true; me.valid = false; me.verified = false; me.binaryName = `${me.id}.wasm`;
+    if (!body || body.function_id === undefined || body.password === undefined)
+      return send(res, 400, { error: "need { function_id, password, and either wasm_base64 or (lang + source) }" });
+    const password = String(body.password);
+    if (body.wasm_base64) {
+      const bytes = new Uint8Array(Buffer.from(body.wasm_base64, "base64"));
+      me.submission = { kind: "wasm", bytes, functionId: body.function_id, password };
+      me.binaryName = `${me.id}.wasm`;
+      emit("submit", { actor: me.id, ok: true, bytes: bytes.length, note: "wasm accepted; pending verification" });
+    } else if (body.source && body.lang) {
+      const ext = body.lang === "cpp" ? "cpp" : body.lang === "python" ? "py" : "sh";
+      me.submission = { kind: "exec", lang: String(body.lang), source: String(body.source), functionId: body.function_id, password };
+      me.binaryName = `${me.id}.${ext}`;
+      emit("submit", { actor: me.id, ok: true, bytes: String(body.source).length, note: `${body.lang} source accepted; pending verification` });
+    } else {
+      return send(res, 400, { error: "provide wasm_base64, or lang + source" });
+    }
+    me.submitted = true; me.valid = false; me.verified = false;
     saveState();
-    emit("submit", { actor: me.id, ok: true, bytes: bytes.length, note: "accepted; pending verification" });
     return send(res, 200, { ok: true, id: me.id, status: "accepted; verified after the build deadline" });
   }
 
@@ -263,9 +303,10 @@ const server = createServer(async (req, res) => {
     const id = path.slice("/v1/binary/".length);
     const a = byId.get(id);
     if (!a || !a.valid) return send(res, 404, { error: "no such binary" });
-    emit("access", { actor: me.id, path, note: `downloaded ${id}'s binary` });
+    emit("access", { actor: me.id, path, note: `downloaded ${id}'s submission` });
     const buf = readFileSync(join(PRIVATE_DIR, "binaries", a.binaryName));
-    res.writeHead(200, { "content-type": "application/wasm" });
+    const type = a.submission?.kind === "exec" ? "text/plain" : "application/wasm";
+    res.writeHead(200, { "content-type": type });
     return res.end(buf);
   }
 

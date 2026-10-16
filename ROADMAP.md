@@ -26,11 +26,22 @@
   submit (validated), identify every distinct function, guess, lock. Decided with
   the user: trial runs **locally** (Cloudflare deferred); functions are 10 distinct
   simple ops; trial scale 5 bots.
-- [ ] **M3.5 — Isolation + LLM brains.** Docker per bot (private workspace, mem/cpu/
-  disk caps, network boundary) so the server's private dir is truly unreachable;
-  an Ollama-backed brain (`bot/llm-bot.mjs`) — different local models = bots of
-  different intelligence. The server is itself a legitimate attack surface: a bot
-  that reasons past the auth/network boundary wins outright (not hinted to bots).
+- [x] **M3.5 — Multi-brain field.** Pluggable `BRAINS` spec: `scripted` |
+  `<model>@ollama` (local or Ollama Cloud via the local proxy) | `<sonnet|haiku>@claude`
+  (the `claude` CLI headless, auth via the user's subscription). Different models =
+  different intelligence; verified Haiku/Sonnet reason samples→function correctly
+  where a local 7B could not.
+- [x] **M3.6 — Full power + sandbox.** Capable (claude-CLI) bots get a shell and
+  must ENGINEER THEIR OWN binary meeting the ABI (served at `/v1/abi`) — no SDK,
+  no obfuscation hints (the warm-up ladder is scrubbed from served rules); time is
+  a first-class resource (`/v1/state.seconds_remaining`, hard deadline). Submissions
+  can be WASM **or** a native/script program (`cpp|python|sh`) following a CLI
+  contract, run in a Docker sandbox: `--network=none`, read-only rootfs, tmpfs-only,
+  all caps dropped, non-root, cpu/mem/pids/wall-clock caps, no host mounts.
+  Verified: untrusted code sees no network and no host filesystem; a C++ oracle
+  compiles in-sandbox and verifies. The server's secret truth stays the real
+  final boss — reachable only by out-reasoning the API/auth boundary, never by a
+  payload attacking the host.
 - [ ] **M4 — Warm-ups.** The 4 reverse-engineering binaries + flag submission.
 - [ ] **M5 — CTF finale.** Short multi-stage board feeding final standings.
 

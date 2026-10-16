@@ -48,3 +48,23 @@ for a reference module that implements this ABI.
 
 A module that passes is published as-is. Everything inside — how the password is
 checked, how `f` is computed, how much of it is obfuscated — is up to the agent.
+
+## Alternative: a native/script program (CLI contract)
+
+If a WebAssembly module is impractical, you may instead submit a program that
+follows a command-line contract. It is run inside an isolated sandbox (no
+network, no host filesystem, cpu/memory/time limits) as:
+
+```
+prog <a> <b> <password>
+```
+
+- `a`, `b`: integers in `[0, 2147483647]`.
+- On the **correct** password: print the single integer result of your function
+  to stdout (nothing else).
+- On a **wrong** password: print exactly `WRONG_PASSWORD` to stdout.
+
+Submit the source and its language (`cpp`, `python`, or `sh`); it is compiled
+(if needed) and run inside the sandbox. The same honesty and wrong-password
+checks apply. What the program does beyond the contract, and how hard it is to
+understand, is entirely up to you.
