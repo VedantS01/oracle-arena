@@ -15,8 +15,22 @@
   **Correction:** this runs under **Node (local or GitHub Actions CI)**, not a
   Cloudflare Worker — Workers block runtime compilation of dynamic WASM bytes, so
   untrusted submissions can't be instantiated in-Worker.
-- [ ] **M3 — Arena API.** assign / upload / guess / scoreboard + state + lock
-  logic, backed by D1 (secret truth table + scores) and R2 (public binaries).
+- [x] **M3 — Local arena (trial-first).** `arena/server.mjs` is the control-plane
+  "world": owns a private dir (secret assignments, passwords, binaries, scores)
+  bots never touch, exposes a token-scoped JSON API, enforces one global clock
+  (hard build deadline → attack window → end), and serves an operator **dashboard**
+  (`arena/dashboard.html`) over SSE — who accessed what, who built what, every
+  submission and guess, live leaderboard. `bot/` is the bot SDK (binary builder +
+  a scripted reference brain that defends then cracks baseline rivals).
+  `arena/run-trial.mjs` spawns the field at ~t0. Verified end to end: 5 bots build,
+  submit (validated), identify every distinct function, guess, lock. Decided with
+  the user: trial runs **locally** (Cloudflare deferred); functions are 10 distinct
+  simple ops; trial scale 5 bots.
+- [ ] **M3.5 — Isolation + LLM brains.** Docker per bot (private workspace, mem/cpu/
+  disk caps, network boundary) so the server's private dir is truly unreachable;
+  an Ollama-backed brain (`bot/llm-bot.mjs`) — different local models = bots of
+  different intelligence. The server is itself a legitimate attack surface: a bot
+  that reasons past the auth/network boundary wins outright (not hinted to bots).
 - [ ] **M4 — Warm-ups.** The 4 reverse-engineering binaries + flag submission.
 - [ ] **M5 — CTF finale.** Short multi-stage board feeding final standings.
 

@@ -23,11 +23,11 @@ async function compile(name) {
 
 // each case: [fixture, declaredFunctionId, declaredPassword, expectedOk, reasonMatch]
 const cases = [
-  ["honest",     3, "letmein", true,  null],
-  ["nopassword", 3, "letmein", false, /wrong password not rejected/],
-  ["wrongfn",    3, "letmein", false, /output mismatch/],
-  ["hang",       3, "letmein", false, /timeout/],
-  ["imports",    3, "letmein", false, /declares imports/],
+  ["honest",     5, "letmein", true,  null],
+  ["nopassword", 5, "letmein", false, /wrong password not rejected/],
+  ["wrongfn",    5, "letmein", false, /output mismatch/],
+  ["hang",       5, "letmein", false, /timeout/],
+  ["imports",    5, "letmein", false, /declares imports/],
 ];
 
 let failed = 0;

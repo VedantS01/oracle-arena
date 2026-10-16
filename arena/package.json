@@ -1,0 +1,12 @@
+{
+  "name": "oracle-arena-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Oracle Arena local control-plane server + trial orchestrator.",
+  "scripts": {
+    "server": "node server.mjs",
+    "trial": "node run-trial.mjs",
+    "trial:fast": "NUM_BOTS=5 BUILD_MS=8000 ATTACK_MS=20000 node run-trial.mjs"
+  }
+}

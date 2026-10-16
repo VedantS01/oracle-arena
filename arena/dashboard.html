@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Oracle Arena — Control Room</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --bg:#eceff4; --surface:#ffffff; --surface-2:#f3f6fa; --line:#ccd4e0;
+    --fg:#1a2230; --muted:#5a6678; --accent:#4f46e5;
+    --gain:#12855a; --gain-bg:#d8efe4; --loss:#c63a30; --loss-bg:#f6dedb;
+    --lock:#b0771a; --lock-bg:#f5e8cf;
+    --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+    --sans:"IBM Plex Sans",system-ui,-apple-system,sans-serif;
+  }
+  @media (prefers-color-scheme:dark){:root{
+    --bg:#0e1320; --surface:#151d2c; --surface-2:#1a2333; --line:#2b3749;
+    --fg:#dce3ef; --muted:#93a1b7; --accent:#8f8ff6;
+    --gain:#37c48d; --gain-bg:#10352a; --loss:#f26c60; --loss-bg:#3a1f1d;
+    --lock:#e2a83c; --lock-bg:#392c13;
+    color-scheme:dark;
+  }}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--sans);font-size:14px;line-height:1.5}
+  .wrap{max-width:1200px;margin:0 auto;padding:18px}
+  header{display:flex;flex-wrap:wrap;gap:14px;align-items:baseline;justify-content:space-between;margin-bottom:16px}
+  h1{font-family:var(--mono);font-weight:600;font-size:20px;margin:0;letter-spacing:-0.01em}
+  h1 .sub{color:var(--muted);font-weight:500}
+  .status{display:flex;gap:10px;align-items:center;font-family:var(--mono);font-size:13px}
+  .badge{padding:4px 11px;border-radius:999px;font-weight:600;border:1px solid var(--line);background:var(--surface)}
+  .badge.build{color:var(--accent)} .badge.attack{color:var(--loss)} .badge.ended{color:var(--muted)} .badge.pending{color:var(--muted)}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--loss)}
+  .dot.on{background:var(--gain)}
+  .grid{display:grid;grid-template-columns:1.1fr 1fr;gap:16px}
+  @media (max-width:860px){.grid{grid-template-columns:1fr}}
+  .panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px;min-width:0}
+  .panel h2{font-family:var(--mono);font-size:12px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin:0 0 10px}
+  table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+  th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line)}
+  th{font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted)}
+  td.score{font-family:var(--mono);font-weight:600}
+  .rank{color:var(--muted);font-family:var(--mono)}
+  .bots{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+  .bot{border:1px solid var(--line);border-radius:10px;padding:10px;background:var(--surface-2)}
+  .bot .id{font-family:var(--mono);font-weight:600}
+  .bot .fn{font-family:var(--mono);font-size:12px;color:var(--accent);margin-top:2px}
+  .bot .meta{display:flex;justify-content:space-between;align-items:baseline;margin-top:8px}
+  .bot .pts{font-family:var(--mono);font-weight:600;font-size:16px}
+  .pill{font-family:var(--mono);font-size:10.5px;padding:2px 7px;border-radius:6px;font-weight:600;border:1px solid var(--line)}
+  .pill.building{color:var(--muted)} .pill.submitted{color:var(--gain);background:var(--gain-bg);border-color:transparent}
+  .pill.locked{color:var(--lock);background:var(--lock-bg);border-color:transparent}
+  .feed{height:440px;overflow-y:auto;font-family:var(--mono);font-size:12px;display:flex;flex-direction:column;gap:3px}
+  .ev{display:flex;gap:8px;padding:4px 6px;border-radius:6px;align-items:baseline}
+  .ev .ts{color:var(--muted);flex:none}
+  .ev .who{font-weight:600;flex:none;min-width:48px}
+  .ev.guess-correct{background:var(--gain-bg)} .ev.guess-correct .msg{color:var(--gain)}
+  .ev.guess-wrong{background:var(--loss-bg)} .ev.guess-wrong .msg{color:var(--loss)}
+  .ev.submit .msg{color:var(--gain)} .ev.submit-fail .msg{color:var(--loss)}
+  .ev.lock{background:var(--lock-bg)} .ev.lock .msg{color:var(--lock)}
+  .ev.phase{border-top:1px solid var(--line);border-bottom:1px solid var(--line);color:var(--accent);font-weight:600}
+  .ev.access .msg,.ev.register .msg,.ev.bot .msg{color:var(--muted)}
+  .nokey{padding:30px;text-align:center;color:var(--loss);font-family:var(--mono)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Oracle Arena <span class="sub">// control room</span></h1>
+    <div class="status">
+      <span id="clock">—</span>
+      <span class="badge pending" id="phase">pending</span>
+      <span class="dot" id="conn"></span>
+    </div>
+  </header>
+  <div id="main" class="grid" hidden>
+    <div style="display:flex;flex-direction:column;gap:16px;min-width:0">
+      <div class="panel">
+        <h2>Live leaderboard</h2>
+        <table><thead><tr><th>#</th><th>bot</th><th>score</th><th>status</th><th>hits taken</th></tr></thead>
+          <tbody id="board"></tbody></table>
+      </div>
+      <div class="panel">
+        <h2>Bots &amp; assignments (operator view)</h2>
+        <div class="bots" id="bots"></div>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Activity feed</h2>
+      <div class="feed" id="feed"></div>
+    </div>
+  </div>
+  <div id="nokey" class="nokey" hidden>Add the spectator key to the URL: <b>?key=YOUR_ADMIN_KEY</b></div>
+</div>
+<script>
+  const KEY = new URLSearchParams(location.search).get("key");
+  const $ = (id) => document.getElementById(id);
+  const fmtTime = (t) => new Date(t).toLocaleTimeString([], {hour12:false});
+  let fnNames = {};
+
+  if (!KEY) { $("nokey").hidden = false; }
+  else { $("main").hidden = false; boot(); }
+
+  function boot(){
+    pollSnapshot();
+    setInterval(pollSnapshot, 1000);
+    connectStream();
+  }
+
+  async function pollSnapshot(){
+    try {
+      const s = await (await fetch(`/spectator/snapshot?key=${encodeURIComponent(KEY)}`)).json();
+      if (s.error) return;
+      fnNames = Object.fromEntries(s.functions.map(f => [f.id, f.name]));
+      renderClock(s.clock, s.lock_at);
+      renderBoard(s.agents);
+      renderBots(s.agents, s.clock.phase, s.lock_at);
+    } catch {}
+  }
+
+  function renderClock(c, lockAt){
+    const ph = c.phase;
+    $("phase").textContent = ph;
+    $("phase").className = "badge " + ph;
+    let left = "";
+    if (ph === "build" && c.build_ends_at) left = secs(c.build_ends_at - c.now) + " to submit";
+    else if (ph === "attack" && c.attack_ends_at) left = secs(c.attack_ends_at - c.now) + " left";
+    else if (ph === "ended") left = "round over";
+    else left = "awaiting start";
+    $("clock").textContent = left + (lockAt ? `  ·  lock@${lockAt}` : "");
+  }
+  const secs = (ms) => Math.max(0, Math.round(ms/1000)) + "s";
+
+  function renderBoard(agents){
+    const rows = [...agents].sort((a,b)=>b.score-a.score);
+    $("board").innerHTML = rows.map((a,i)=>{
+      const st = a.locked ? `<span class="pill locked">locked</span>`
+               : a.valid ? `<span class="pill submitted">submitted</span>`
+               : `<span class="pill building">building</span>`;
+      return `<tr><td class="rank">${i+1}</td><td>${a.id}</td>
+        <td class="score">${a.score}</td><td>${st}</td><td>${a.attempts}</td></tr>`;
+    }).join("");
+  }
+
+  function renderBots(agents, phase, lockAt){
+    $("bots").innerHTML = agents.map(a=>{
+      const st = a.locked ? `<span class="pill locked">locked ${a.attempts}/${lockAt}</span>`
+               : a.valid ? `<span class="pill submitted">submitted</span>`
+               : `<span class="pill building">building…</span>`;
+      return `<div class="bot"><div class="id">${a.id}</div>
+        <div class="fn">${a.function_name} <span style="color:var(--muted)">(fn ${a.function_id})</span></div>
+        <div class="meta"><span class="pts">${a.score}</span>${st}</div></div>`;
+    }).join("");
+  }
+
+  function connectStream(){
+    const es = new EventSource(`/spectator/stream?key=${encodeURIComponent(KEY)}`);
+    es.onopen = () => $("conn").classList.add("on");
+    es.onerror = () => $("conn").classList.remove("on");
+    es.onmessage = (m) => { try { addEvent(JSON.parse(m.data)); } catch {} };
+  }
+
+  function addEvent(e){
+    const feed = $("feed");
+    const atBottom = feed.scrollTop + feed.clientHeight >= feed.scrollHeight - 30;
+    const div = document.createElement("div");
+    let cls = e.type, msg = "", who = e.actor || "";
+    if (e.type === "access") msg = e.note || `read ${e.path.replace("/v1/","")}`;
+    else if (e.type === "register") msg = `joined — assigned ${e.function_name} (fn ${e.function_id})`;
+    else if (e.type === "submit") { cls = e.ok ? "submit" : "submit-fail"; msg = e.ok ? `submitted binary (${e.bytes}B), validated` : `submission rejected: ${e.reason}`; }
+    else if (e.type === "guess") { cls = e.correct ? "guess-correct" : "guess-wrong"; msg = `guessed ${e.target} = ${e.function_name} → ${e.correct ? "CORRECT +2" : "WRONG −2"} (now ${e.guesser_score})`; }
+    else if (e.type === "lock") { who = ""; msg = `🔒 ${e.target} locked after ${e.attempts} attempts`; }
+    else if (e.type === "phase") { who = ""; msg = `── phase: ${e.phase.toUpperCase()} ──`; }
+    else if (e.type === "bot") msg = e.msg;
+    div.className = "ev " + cls;
+    div.innerHTML = `<span class="ts">${fmtTime(e.t)}</span><span class="who">${who}</span><span class="msg">${escapeHtml(msg)}</span>`;
+    feed.appendChild(div);
+    while (feed.childElementCount > 400) feed.removeChild(feed.firstChild);
+    if (atBottom) feed.scrollTop = feed.scrollHeight;
+  }
+  function escapeHtml(s){ return String(s).replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+</script>
+</body>
+</html>
