@@ -155,7 +155,17 @@
 </style>
 </head>
 <body>
-<div id="nokey" class="nokey" hidden>Add the spectator key to the URL: <b>?key=YOUR_ADMIN_KEY</b></div>
+<div id="nokey" class="nokey" hidden>
+  <div style="display:flex;flex-direction:column;gap:12px;align-items:center;color:var(--parch)">
+    <div style="font-family:var(--disp);font-size:22px;color:var(--gold)">Enter spectator key</div>
+    <div style="display:flex;gap:8px">
+      <input id="keyin" value="trial-admin" spellcheck="false" autocomplete="off"
+        style="font-family:var(--mono);font-size:14px;padding:8px 12px;border-radius:10px;border:2px solid var(--gold-deep);background:#1d130a;color:var(--parch)">
+      <button id="keygo" style="font-family:var(--disp);font-size:14px;padding:8px 16px;border-radius:10px;border:2px solid var(--gold-deep);background:linear-gradient(180deg,var(--gold),var(--gold-2));color:var(--wood);cursor:pointer">Watch ▶</button>
+    </div>
+    <div style="font-size:12px;color:var(--parch-2)">(for the local trial it is <b>trial-admin</b>)</div>
+  </div>
+</div>
 <div id="app" class="app" hidden>
   <div class="rail">
     <div class="panel brand">
@@ -173,7 +183,7 @@
   <div class="arena" id="arena"></div>
 </div>
 <script>
-  const KEY = new URLSearchParams(location.search).get("key");
+  let KEY = new URLSearchParams(location.search).get("key");
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s).replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
   const fmtTime = (t) => new Date(t).toLocaleTimeString([], {hour12:false});
@@ -198,19 +208,25 @@
     return ORDER[i % ORDER.length];
   }
 
-  if (!KEY) { $("nokey").hidden = false; }
-  else { $("app").hidden = false; start(); }
-
+  function showKeyPrompt(){ $("app").hidden = true; $("nokey").hidden = false; }
+  function tryKey(k){ KEY = k; try { localStorage.setItem("arenaKey", k); } catch {} $("nokey").hidden = true; $("app").hidden = false; started = false; start(); }
+  $("keygo").addEventListener("click", () => tryKey($("keyin").value.trim()));
+  $("keyin").addEventListener("keydown", (e) => { if (e.key === "Enter") tryKey($("keyin").value.trim()); });
+  // KEY from ?key= / #key= / last time / the local-trial default, then verify it.
   let fnNames = {};
   const rooms = new Map();       // bot id -> { el, stream, lastRound }
-  let maxRoundBar = 1, fieldIdx = 0;
+  let started = false, intv = null;
+  function start(){ if (started) return; started = true; pollSnapshot().then(connectStream); if (intv) clearInterval(intv); intv = setInterval(pollSnapshot, 1000); }
 
-  function start(){ pollSnapshot().then(connectStream); setInterval(pollSnapshot, 1000); }
+  // KEY from ?key= / #key= / last time / the local-trial default, then verify it.
+  KEY = KEY || (location.hash.match(/[#&]key=([^&]+)/) || [])[1] || (()=>{ try { return localStorage.getItem("arenaKey"); } catch { return null; } })() || "trial-admin";
+  $("app").hidden = false; start();
 
   async function pollSnapshot(){
     try{
       const s = await (await fetch(`/spectator/snapshot?key=${encodeURIComponent(KEY)}`)).json();
-      if (s.error) return;
+      if (s && s.error) { showKeyPrompt(); return; }
+      if (!s) return;
       fnNames = Object.fromEntries(s.functions.map(f => [f.id, f.name]));
       renderHud(s.clock);
       const sorted = [...s.agents];
