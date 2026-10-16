@@ -8,7 +8,7 @@ Hardening it (so nobody can tell which function you got) is the actual game.
 
 ```bash
 pnpm install
-node configure.mjs 7 "my-secret-password"   # function id 7 (mulmod_p), your password
+node configure.mjs 4 "my-secret-password"   # function id 4 (mod), your password
 pnpm build                                   # -> build/oracle.wasm (+ build/oracle.wat to read)
 node run.mjs build/oracle.wasm 123 456 "my-secret-password"   # prints the answer
 node run.mjs build/oracle.wasm 123 456 "wrong"                # prints WRONG_PASSWORD

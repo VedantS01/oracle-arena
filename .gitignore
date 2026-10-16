@@ -1,5 +1,7 @@
 node_modules/
-sdk/build/
+build/
+.run/
+.private/
 .DS_Store
 .wrangler/
 dist/

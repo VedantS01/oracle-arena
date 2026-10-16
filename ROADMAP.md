@@ -7,11 +7,41 @@
 - [x] **M1 — Challenge SDK.** AssemblyScript → WASM baseline locked oracle,
   `configure.mjs` (function id + password → buildable module), `run.mjs` local
   host harness. *The equalizer: every agent needs this in hand first.*
-- [ ] **M2 — Sandbox runner + honesty validator.** Cloudflare Worker instantiates
-  a submitted module, writes the declared password, checks `run(a,b)` == `f(a,b)`
-  on random inputs, and checks a wrong password returns the sentinel. CPU/mem caps.
-- [ ] **M3 — Arena API.** assign / upload / guess / scoreboard + state + lock
-  logic, backed by D1 (secret truth table + scores) and R2 (public binaries).
+- [x] **M2 — Sandbox runner + honesty validator** (`validator/`). Instantiates a
+  submitted module with no imports, writes the declared password, checks
+  `run(a,b)` == `f(a,b)` on edge + random inputs, and checks a wrong password
+  returns the sentinel. Runs in a killable `worker_thread` (bounds hangs). Tested
+  against honest + 4 adversarial fixtures (cheat / mismatch / hang / imports).
+  **Correction:** this runs under **Node (local or GitHub Actions CI)**, not a
+  Cloudflare Worker — Workers block runtime compilation of dynamic WASM bytes, so
+  untrusted submissions can't be instantiated in-Worker.
+- [x] **M3 — Local arena (trial-first).** `arena/server.mjs` is the control-plane
+  "world": owns a private dir (secret assignments, passwords, binaries, scores)
+  bots never touch, exposes a token-scoped JSON API, enforces one global clock
+  (hard build deadline → attack window → end), and serves an operator **dashboard**
+  (`arena/dashboard.html`) over SSE — who accessed what, who built what, every
+  submission and guess, live leaderboard. `bot/` is the bot SDK (binary builder +
+  a scripted reference brain that defends then cracks baseline rivals).
+  `arena/run-trial.mjs` spawns the field at ~t0. Verified end to end: 5 bots build,
+  submit (validated), identify every distinct function, guess, lock. Decided with
+  the user: trial runs **locally** (Cloudflare deferred); functions are 10 distinct
+  simple ops; trial scale 5 bots.
+- [x] **M3.5 — Multi-brain field.** Pluggable `BRAINS` spec: `scripted` |
+  `<model>@ollama` (local or Ollama Cloud via the local proxy) | `<sonnet|haiku>@claude`
+  (the `claude` CLI headless, auth via the user's subscription). Different models =
+  different intelligence; verified Haiku/Sonnet reason samples→function correctly
+  where a local 7B could not.
+- [x] **M3.6 — Full power + sandbox.** Capable (claude-CLI) bots get a shell and
+  must ENGINEER THEIR OWN binary meeting the ABI (served at `/v1/abi`) — no SDK,
+  no obfuscation hints (the warm-up ladder is scrubbed from served rules); time is
+  a first-class resource (`/v1/state.seconds_remaining`, hard deadline). Submissions
+  can be WASM **or** a native/script program (`cpp|python|sh`) following a CLI
+  contract, run in a Docker sandbox: `--network=none`, read-only rootfs, tmpfs-only,
+  all caps dropped, non-root, cpu/mem/pids/wall-clock caps, no host mounts.
+  Verified: untrusted code sees no network and no host filesystem; a C++ oracle
+  compiles in-sandbox and verifies. The server's secret truth stays the real
+  final boss — reachable only by out-reasoning the API/auth boundary, never by a
+  payload attacking the host.
 - [ ] **M4 — Warm-ups.** The 4 reverse-engineering binaries + flag submission.
 - [ ] **M5 — CTF finale.** Short multi-stage board feeding final standings.
 
@@ -26,9 +56,13 @@
 
 ## Deployment ($0, static-first doctrine)
 
-Cloudflare Worker runs the submitted WASM for the honesty check inside its own
-sandbox; D1 holds scores + secret truth; R2 serves public binaries. Agents fetch
-binaries and do RE on their own compute, so server stays near-free.
+The honesty check (running untrusted WASM) runs under **Node** — locally or in
+**GitHub Actions CI** (free for a public repo), triggered on upload — because
+Cloudflare Workers can't compile dynamic WASM bytes at runtime. The Cloudflare
+Worker (M3) keeps only dynamic-code-free work: auth, scores + secret truth in
+D1, public binaries in R2, and guess adjudication (via `validator/functions.mjs`,
+no WASM execution). Agents fetch binaries and do RE on their own compute, so the
+server stays near-free.
 
 ## Research surface
 

@@ -1,17 +1,17 @@
 {
-  "$comment": "Canonical truth table for Oracle Arena. Inputs a,b are integers in [0, 2147483647]. All results fit in a signed 64-bit integer. These semantics are authoritative; the SDK and validator must match them exactly.",
+  "$comment": "Canonical truth table for Oracle Arena. Ten distinct, simple two-argument integer operations. Inputs a,b are integers in [0, 2147483647]. All results fit in a signed 64-bit integer. These semantics are authoritative; the SDK and validator must match them exactly.",
   "input_domain": { "min": 0, "max": 2147483647, "count": 2 },
   "result_type": "i64",
   "functions": [
-    { "id": 0, "name": "add",        "formula": "a + b",                   "note": "sum" },
-    { "id": 1, "name": "mul",        "formula": "a * b",                   "note": "product; max (2^31-1)^2 fits i64" },
-    { "id": 2, "name": "gcd",        "formula": "gcd(a, b)",               "note": "Euclid; gcd(0,0)=0" },
-    { "id": 3, "name": "max",        "formula": "max(a, b)",               "note": "larger of the two" },
-    { "id": 4, "name": "xor",        "formula": "a ^ b",                   "note": "bitwise xor" },
-    { "id": 5, "name": "mod1",       "formula": "a mod (b + 1)",           "note": "b+1 avoids div-by-zero; b+1 fits since b<2^31" },
-    { "id": 6, "name": "popcount2",  "formula": "popcount(a) + popcount(b)","note": "count of set bits in each, summed" },
-    { "id": 7, "name": "mulmod_p",   "formula": "(a * b) mod 2147483647",  "note": "p = 2^31-1 (Mersenne prime); a*b < 2^62 so no overflow before mod" },
-    { "id": 8, "name": "absdiff",    "formula": "|a - b|",                 "note": "absolute difference" },
-    { "id": 9, "name": "sumsq",      "formula": "a*a + b*b",               "note": "sum of squares; max 2*(2^31-1)^2 < i64 max" }
+    { "id": 0, "name": "add", "formula": "a + b",      "note": "sum" },
+    { "id": 1, "name": "sub", "formula": "a - b",      "note": "difference; may be negative" },
+    { "id": 2, "name": "mul", "formula": "a * b",      "note": "product; max (2^31-1)^2 fits i64" },
+    { "id": 3, "name": "div", "formula": "a / b",      "note": "integer division truncated toward zero; b==0 gives 0" },
+    { "id": 4, "name": "mod", "formula": "a % b",      "note": "remainder; b==0 gives 0" },
+    { "id": 5, "name": "max", "formula": "max(a, b)",  "note": "larger of the two" },
+    { "id": 6, "name": "min", "formula": "min(a, b)",  "note": "smaller of the two" },
+    { "id": 7, "name": "xor", "formula": "a ^ b",      "note": "bitwise exclusive or" },
+    { "id": 8, "name": "and", "formula": "a & b",      "note": "bitwise and" },
+    { "id": 9, "name": "or",  "formula": "a | b",      "note": "bitwise or" }
   ]
 }

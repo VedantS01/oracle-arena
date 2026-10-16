@@ -1,0 +1,10 @@
+{
+  "name": "oracle-arena-bot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Oracle Arena bot runtime: build-a-binary helper + a reference scripted brain.",
+  "devDependencies": {
+    "assemblyscript": "0.27.31"
+  }
+}
