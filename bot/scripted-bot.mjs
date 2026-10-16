@@ -7,7 +7,7 @@
 //
 // Env: ARENA_URL, ARENA_TOKEN, BOT_WORKSPACE, ASSEMBLY_DIR
 import { buildBinary } from "./build-binary.mjs";
-import { fref } from "../validator/functions.mjs";
+import { fetchAndCrack } from "./crack.mjs";
 import { mkdirSync } from "node:fs";
 
 const URL_ = process.env.ARENA_URL;
@@ -50,46 +50,7 @@ log(up.body.ok ? "binary submitted and validated." : `upload rejected: ${JSON.st
 // --- wait for the attack phase ---
 await waitFor((s) => s.phase === "attack" || s.phase === "ended");
 
-// --- attack ---
-function extractStrings(bytes, min = 3) {
-  const out = new Set(); let cur = "";
-  for (const b of bytes) {
-    if (b >= 0x20 && b < 0x7f) cur += String.fromCharCode(b);
-    else { if (cur.length >= min) out.add(cur); cur = ""; }
-  }
-  if (cur.length >= min) out.add(cur);
-  // also add contiguous sub-runs so an adjacent-data merge still yields the pw
-  for (const s of [...out]) for (let i = 0; i < s.length; i++) for (let j = i + min; j <= s.length; j++) out.add(s.slice(i, j));
-  return [...out];
-}
-async function crackAndIdentify(bytes) {
-  let ex;
-  try { ex = (await WebAssembly.instantiate(bytes, {})).instance.exports; } catch { return null; }
-  const { memory, pwd_ptr, run } = ex;
-  if (typeof run !== "function" || typeof pwd_ptr !== "function") return null;
-  const call = (pw, a, b) => {
-    const ptr = Number(pwd_ptr()); const p = new TextEncoder().encode(pw);
-    new Uint8Array(memory.buffer, ptr, p.length).set(p);
-    return run(a, b, p.length);
-  };
-  // find a password that unlocks (output != sentinel)
-  let pw = null;
-  for (const cand of extractStrings(bytes)) {
-    try { if (call(cand, 13n, 7n) !== WRONG) { pw = cand; break; } } catch {}
-  }
-  if (pw === null) return null; // couldn't crack (hardened) -> don't guess
-  // identify the function by probing
-  // varied inputs (overlapping bits, carries, a big one) separate all 10 distinct ops
-  const probes = [[6n, 10n], [12n, 10n], [9n, 5n], [8n, 3n], [14n, 6n], [255n, 2n], [1000000000n, 7n], [13n, 13n]];
-  let cands = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
-  for (const [a, b] of probes) {
-    const got = call(pw, a, b);
-    cands = cands.filter((id) => { try { return fref(id, a, b) === got; } catch { return false; } });
-    if (cands.length <= 1) break;
-  }
-  return cands.length === 1 ? cands[0] : null;
-}
-
+// --- attack --- (crack WASM in-process, ELF/scripts in the sandbox; see crack.mjs)
 const tried = new Set();
 for (;;) {
   const s = (await api("/v1/state")).body;
@@ -99,12 +60,10 @@ for (;;) {
   if (fresh.length === 0) { log("no untried targets left; done attacking."); break; }
   for (const t of fresh) {
     tried.add(t.id);
-    const dl = await api(`/v1/binary/${t.id}`);
-    if (!(dl.body instanceof Uint8Array)) continue;
-    const fid = await crackAndIdentify(dl.body);
-    if (fid === null) { log(`could not crack ${t.id}; skipping (negative EV to guess blind).`); continue; }
-    const g = await api("/v1/guess", { method: "POST", body: JSON.stringify({ target: t.id, function_id: fid }) });
-    if (g.status === 200) log(`guessed ${t.id} = fn ${fid} -> ${g.body.correct ? "CORRECT +2" : "wrong -2"} (score ${g.body.your_score})`);
+    const res = await fetchAndCrack(URL_, TOKEN, t.id);
+    if (!res || res.functionId === null) { log(`could not crack/identify ${t.id}; skipping (negative EV to guess blind).`); continue; }
+    const g = await api("/v1/guess", { method: "POST", body: JSON.stringify({ target: t.id, function_id: res.functionId }) });
+    if (g.status === 200) log(`guessed ${t.id} = fn ${res.functionId} -> ${g.body.correct ? "CORRECT +2" : "wrong -2"} (score ${g.body.your_score})`);
   }
   await sleep(800);
 }

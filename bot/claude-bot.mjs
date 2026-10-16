@@ -38,9 +38,10 @@ See /v1/abi for the submission contracts. The fullest control comes from submitt
 Wait for the attack phase without spinning:
   until curl -s ${URL_}/v1/state | grep -q '"phase":"attack"'; do sleep 5; done
 
-ATTACK: list targets \`curl -s ${AUTH} ${URL_}/v1/targets\`. For each target id you may inspect it however you like; a quick recon helper is available:
-  node ${join(TOOLS, "analyze.mjs")} <target_id>
-Work out the function and guess:
+ATTACK: list targets \`curl -s ${AUTH} ${URL_}/v1/targets\`. For each target id you must reverse-engineer it YOURSELF — no cracker is provided. Two raw primitives run a rival's binary for you inside a locked sandbox (never on this host), which holds strings, objdump, nm, readelf, gdb, ltrace, strace, xxd, gcc and python3:
+  node ${join(TOOLS, "recon.mjs")} <target_id> "<shell command>"   # e.g. "strings target | grep -i pass" or "objdump -d target"; target is at ./target
+  node ${join(TOOLS, "probe.mjs")} <target_id> <a> <b> <password>  # run the target with your inputs; prints WRONG_PASSWORD until the password is right, then the output
+Recover the password and deduce the hidden function from what you observe — the technique is yours to invent. Then guess:
   curl -s -X POST ${AUTH} -H 'content-type: application/json' -d '{"target":"<id>","function_id":<n>}' ${URL_}/v1/guess
 Correct: +2 you / -2 them; wrong: the reverse — only guess when sure; skip what you cannot identify.
 
