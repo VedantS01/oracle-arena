@@ -103,7 +103,7 @@ async function verifyExec(fnId, s) {
   const pw = String(s.password);
   const ops = inputs.map(([a, b]) => [a, b, pw]);
   const wrong = inputs.slice(0, 3).map(([a, b]) => [a, b, pw + "_WRONG"]);
-  const r = await runExec({ lang: s.lang, source: s.source, ops: ops.concat(wrong), timeoutMs: 25000 });
+  const r = await runExec({ lang: s.lang, source: s.source, ops: ops.concat(wrong), timeoutMs: 25000, returnBinary: s.lang === "cpp" });
   if (!r.ok) return { ok: false, reason: r.stage === "compile" ? "compile failed: " + String(r.error || "").slice(0, 120) : (r.reason || r.error || "sandbox error") };
   const out = r.results || [];
   for (let i = 0; i < inputs.length; i++) {
@@ -114,7 +114,7 @@ async function verifyExec(fnId, s) {
   for (let i = 0; i < wrong.length; i++) {
     if (out[inputs.length + i] !== "WRONG_PASSWORD") return { ok: false, reason: `wrong password not rejected: got ${out[inputs.length + i]}` };
   }
-  return { ok: true };
+  return { ok: true, binaryB64: r.binary_b64 || null };
 }
 
 // verify each accepted submission after the build deadline, with visible pacing,
@@ -125,12 +125,22 @@ async function runVerification() {
   for (const a of subs) {
     await sleep(500); // deliberate pacing so verification is observable
     const s = a.submission;
-    let ok = false, reason = "";
+    let ok = false, reason = "", binaryB64 = null;
     if (s.functionId !== a.functionId) { reason = "declared function is not the one assigned"; }
-    else if (s.kind === "exec") { const v = await verifyExec(a.functionId, s); ok = v.ok; reason = v.reason || ""; }
+    else if (s.kind === "exec") { const v = await verifyExec(a.functionId, s); ok = v.ok; reason = v.reason || ""; binaryB64 = v.binaryB64; }
     else { const v = await validateModule(s.bytes, a.functionId, String(s.password)); ok = v.ok; reason = v.reason || ""; }
     a.valid = ok; a.verified = true;
-    if (ok) writeFileSync(join(PRIVATE_DIR, "binaries", a.binaryName), s.kind === "exec" ? Buffer.from(s.source, "utf8") : Buffer.from(s.bytes));
+    if (ok) {
+      // publish the compiled artifact — a binary where one exists (wasm, or the
+      // C++ -> ELF), so rivals must reverse-engineer rather than read source.
+      if (s.kind === "wasm") a.published = { name: `${a.id}.wasm`, type: "application/wasm", kind: "wasm" };
+      else if (s.lang === "cpp" && binaryB64) a.published = { name: `${a.id}.bin`, type: "application/octet-stream", kind: "elf" };
+      else a.published = { name: `${a.id}.${s.lang === "python" ? "py" : "sh"}`, type: "text/plain", kind: "script" };
+      const data = s.kind === "wasm" ? Buffer.from(s.bytes)
+                 : a.published.kind === "elf" ? Buffer.from(binaryB64, "base64")
+                 : Buffer.from(s.source, "utf8");
+      writeFileSync(join(PRIVATE_DIR, "binaries", a.published.name), data);
+    }
     emit("verify", { actor: a.id, ok, reason });
     saveState();
   }
@@ -302,11 +312,10 @@ const server = createServer(async (req, res) => {
     if (phase() !== "attack") return send(res, 403, { error: "binaries published in the attack phase only" });
     const id = path.slice("/v1/binary/".length);
     const a = byId.get(id);
-    if (!a || !a.valid) return send(res, 404, { error: "no such binary" });
-    emit("access", { actor: me.id, path, note: `downloaded ${id}'s submission` });
-    const buf = readFileSync(join(PRIVATE_DIR, "binaries", a.binaryName));
-    const type = a.submission?.kind === "exec" ? "text/plain" : "application/wasm";
-    res.writeHead(200, { "content-type": type });
+    if (!a || !a.valid || !a.published) return send(res, 404, { error: "no such binary" });
+    emit("access", { actor: me.id, path, note: `downloaded ${id}'s ${a.published.kind}` });
+    const buf = readFileSync(join(PRIVATE_DIR, "binaries", a.published.name));
+    res.writeHead(200, { "content-type": a.published.type, "x-artifact-kind": a.published.kind });
     return res.end(buf);
   }
 

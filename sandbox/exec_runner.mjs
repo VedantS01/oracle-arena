@@ -21,7 +21,7 @@ const LOCKDOWN = [
  * @param {{lang:string, source:string, ops:Array<[number|string,number|string,string]>, timeoutMs?:number}} job
  * @returns {Promise<{ok:boolean, results?:string[], stage?:string, error?:string, reason?:string}>}
  */
-export function runExec({ lang, source, ops, timeoutMs = 20000 }) {
+export function runExec({ lang, source, sourceBytes, ops, timeoutMs = 20000, returnBinary = false }) {
   return new Promise((resolve) => {
     const p = spawn("docker", [...LOCKDOWN, IMAGE], { stdio: ["pipe", "pipe", "pipe"] });
     let out = "", err = "", done = false;
@@ -37,7 +37,8 @@ export function runExec({ lang, source, ops, timeoutMs = 20000 }) {
       try { resolve(JSON.parse(line)); }
       catch { resolve({ ok: false, reason: "unreadable sandbox output: " + (err || out).slice(0, 200) }); }
     });
-    const payload = { lang, source_b64: Buffer.from(source, "utf8").toString("base64"), ops, op_timeout: 2, compile_timeout: 15 };
+    const source_b64 = sourceBytes ? Buffer.from(sourceBytes).toString("base64") : Buffer.from(source || "", "utf8").toString("base64");
+    const payload = { lang, source_b64, ops, op_timeout: 2, compile_timeout: 15, return_binary: returnBinary };
     p.stdin.write(JSON.stringify(payload));
     p.stdin.end();
   });

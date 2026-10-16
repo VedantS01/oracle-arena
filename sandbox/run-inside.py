@@ -1,8 +1,10 @@
 # Runs inside the sandbox container. Reads one JSON job from stdin:
-#   {lang: "cpp"|"python"|"sh", source_b64, ops: [[a,b,pw],...], op_timeout, compile_timeout}
-# Writes the source to the tmpfs /work, compiles if needed, then invokes the
-# program once per op as `prog <a> <b> <password>` and collects stdout.
-# Prints {ok, results} (or {ok:false, stage/error}) as one JSON line on stdout.
+#   {lang: "cpp"|"python"|"sh"|"binary", source_b64, ops: [[a,b,pw],...],
+#    op_timeout, compile_timeout, return_binary}
+# Writes the program to the tmpfs /work, compiles if needed (or decodes a
+# prebuilt binary for lang="binary"), then invokes it once per op as
+# `prog <a> <b> <password>` and collects stdout. Prints one JSON line:
+#   {ok, results, binary_b64?}  or  {ok:false, stage/error}
 import sys, json, base64, subprocess, os
 
 def out(o):
@@ -14,13 +16,14 @@ except Exception as e:
     out({"ok": False, "error": "bad job: %s" % e})
 
 lang = job.get("lang")
-src = base64.b64decode(job.get("source_b64", "")).decode("utf-8", "replace")
+raw = base64.b64decode(job.get("source_b64", ""))
 ops = job.get("ops", [])
 op_timeout = float(job.get("op_timeout", 2))
 os.chdir("/work")
+extra = {}
 
 if lang == "cpp":
-    open("src.cpp", "w").write(src)
+    open("src.cpp", "wb").write(raw)
     try:
         r = subprocess.run(["g++", "-O2", "-std=c++17", "-o", "prog", "src.cpp"],
                            capture_output=True, timeout=float(job.get("compile_timeout", 15)))
@@ -29,10 +32,14 @@ if lang == "cpp":
     if r.returncode != 0:
         out({"ok": False, "stage": "compile", "error": r.stderr.decode("utf-8", "replace")[:800]})
     prog = ["./prog"]
+    if job.get("return_binary"):
+        extra["binary_b64"] = base64.b64encode(open("prog", "rb").read()).decode()
 elif lang == "python":
-    open("src.py", "w").write(src); prog = ["python3", "src.py"]
+    open("src.py", "wb").write(raw); prog = ["python3", "src.py"]
 elif lang in ("sh", "bash"):
-    open("src.sh", "w").write(src); prog = ["bash", "src.sh"]
+    open("src.sh", "wb").write(raw); prog = ["bash", "src.sh"]
+elif lang == "binary":
+    open("prog", "wb").write(raw); os.chmod("prog", 0o755); prog = ["./prog"]
 else:
     out({"ok": False, "error": "unknown lang: %r" % lang})
 
@@ -46,4 +53,4 @@ for op in ops:
         results.append("<timeout>")
     except Exception:
         results.append("<err>")
-out({"ok": True, "results": results})
+out({"ok": True, "results": results, **extra})
