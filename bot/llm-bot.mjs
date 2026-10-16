@@ -91,6 +91,40 @@ async function execTool(name, args) {
   } catch (e) { return { error: String(e.message || e) }; }
 }
 
+// Many local models (qwen2.5-coder included) emit tool calls as JSON in the text
+// instead of native tool_calls. Pull balanced {...} objects out of the content.
+function jsonObjects(text) {
+  const out = [];
+  if (!text) return out;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] !== "{") continue;
+    let depth = 0;
+    for (let j = i; j < text.length; j++) {
+      if (text[j] === "{") depth++;
+      else if (text[j] === "}") { depth--; if (depth === 0) { try { out.push(JSON.parse(text.slice(i, j + 1))); } catch {} i = j; break; } }
+    }
+  }
+  return out;
+}
+
+// Collect tool calls from native tool_calls AND from JSON embedded in content
+// (Ollama/qwen usually does the latter). Per tool name keep the most-populated
+// args, so a half-parsed empty-arg native call doesn't shadow the real one.
+function toolCallsFrom(msg) {
+  const raw = [];
+  for (const tc of msg.tool_calls || []) {
+    let args = {}; const a = tc.function?.arguments;
+    try { args = typeof a === "string" ? JSON.parse(a || "{}") : (a || {}); } catch {}
+    if (tc.function?.name) raw.push({ name: tc.function.name, args });
+  }
+  for (const o of jsonObjects(msg.content || "")) {
+    if (typeof o.name === "string") raw.push({ name: o.name, args: (o.arguments && typeof o.arguments === "object") ? o.arguments : (o.parameters || {}) });
+  }
+  const byName = new Map();
+  for (const c of raw) { const p = byName.get(c.name); if (!p || Object.keys(c.args).length > Object.keys(p.args).length) byName.set(c.name, c); }
+  return [...byName.values()];
+}
+
 // --- Ollama chat ---
 async function chat(messages) {
   const r = await fetch(`${OLLAMA}/chat/completions`, { method: "POST", headers: { "content-type": "application/json" },
@@ -113,15 +147,17 @@ for (let step = 0; step < MAX_STEPS; step++) {
   try { msg = await chat(messages); }
   catch (e) { log("chat error:", e.message); await sleep(1500); continue; }
 
-  if (msg.content?.trim()) await postThought(msg.content.trim());
-  messages.push({ role: "assistant", content: msg.content || "", tool_calls: msg.tool_calls });
+  // narrate the reasoning (the part before any inline tool-call JSON)
+  const thought = (msg.content || "").split(/\{\s*"name"/)[0].trim();
+  if (thought) await postThought(thought);
+  messages.push({ role: "assistant", content: msg.content || "" });
 
-  if (msg.tool_calls?.length) {
-    for (const tc of msg.tool_calls) {
-      let args = {}; try { args = typeof tc.function.arguments === "string" ? JSON.parse(tc.function.arguments || "{}") : (tc.function.arguments || {}); } catch {}
-      const result = await execTool(tc.function.name, args);
-      log("🔧", tc.function.name, JSON.stringify(args).slice(0, 80));
-      messages.push({ role: "tool", tool_call_id: tc.id || tc.function.name, name: tc.function.name, content: JSON.stringify(result).slice(0, 2500) });
+  const calls = toolCallsFrom(msg);
+  if (calls.length) {
+    for (const c of calls) {
+      const result = await execTool(c.name, c.args);
+      log("🔧", c.name, JSON.stringify(c.args).slice(0, 80), "->", JSON.stringify(result).slice(0, 90));
+      messages.push({ role: "user", content: `Result of ${c.name}(${JSON.stringify(c.args)}): ${JSON.stringify(result).slice(0, 2500)}` });
     }
     continue;
   }

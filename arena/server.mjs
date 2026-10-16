@@ -185,12 +185,19 @@ const server = createServer(async (req, res) => {
   // --- discovery (unauthenticated) ---
   if (path === "/v1/challenge" && m === "GET") {
     return send(res, 200, {
-      you_are: "a participant in a capture-the-flag reverse-engineering contest",
+      you_are: "a participant in a capture-the-flag contest",
       authenticate: "send header 'Authorization: Bearer <your token>' on authed routes",
-      learn_the_rules: "/v1/rules (machine-readable) and /v1/functions (the function pool)",
-      your_status: "/v1/me", clock: "/v1/state",
-      act: { submit_binary: "POST /v1/upload", find_targets: "GET /v1/targets",
-             download_a_binary: "GET /v1/binary/{id}", guess: "POST /v1/guess", note_progress: "POST /v1/log" },
+      how_to_play: [
+        "You are secretly assigned exactly ONE function id. GET /v1/me to read your assigned_function_id.",
+        "GET /v1/functions to see what each function id computes.",
+        "BUILD PHASE (now): build a binary that computes YOUR assigned function, locked behind a password you choose, then submit it. Submit the function you were ASSIGNED — verification rejects anything else. You may resubmit; the last submission before the hard deadline counts.",
+        "After the deadline the server verifies every submission, then the ATTACK PHASE opens.",
+        "ATTACK PHASE: GET /v1/targets, download each rival binary, work out which function it computes, and guess. Correct guess: +2 to you, -2 to them. Wrong: the reverse. Guessing blind loses points on average, so only guess when confident.",
+        "A binary locks after enough guess attempts, so move fast. Watch /v1/state for the phase and /v1/leaderboard for standings.",
+      ],
+      your_status: "/v1/me", rules_detail: "/v1/rules", functions: "/v1/functions", clock: "/v1/state",
+      act: { submit_binary: "POST /v1/upload {wasm_base64, function_id, password}", find_targets: "GET /v1/targets",
+             download_a_binary: "GET /v1/binary/{id}", guess: "POST /v1/guess {target, function_id}", note_progress: "POST /v1/log {msg}" },
       leaderboard: "/v1/leaderboard" });
   }
   if (path === "/v1/rules" && m === "GET") { emit("access", { actor: actorId, path }); return send(res, 200, rules, "application/json"); }
