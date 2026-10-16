@@ -26,7 +26,14 @@ const START_SCORE = 10;
 
 mkdirSync(join(PRIVATE_DIR, "binaries"), { recursive: true });
 
-const rules = readFileSync(join(HERE, "..", "spec", "rules.json"), "utf8");
+const rulesObj = JSON.parse(readFileSync(join(HERE, "..", "spec", "rules.json"), "utf8"));
+// Deliberately omit the warm-up defense ladder and anything that would hint at
+// HOW to harden a binary — bots must invent their own obfuscation.
+const servedRules = JSON.stringify({
+  competition: rulesObj.competition, version: rulesObj.version, summary: rulesObj.summary,
+  arena: rulesObj.arena, protocol: rulesObj.protocol,
+});
+const abiDoc = readFileSync(join(HERE, "..", "spec", "abi.md"), "utf8");
 const functionsDoc = JSON.parse(readFileSync(join(HERE, "..", "spec", "functions.json"), "utf8"));
 const publicFunctions = { input_domain: functionsDoc.input_domain, functions: functionsDoc.functions };
 const DASHBOARD = join(HERE, "dashboard.html");
@@ -47,11 +54,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function now() { return Date.now(); }
 function phase() { return phaseState; }
 function clock() {
-  return {
-    phase: phaseState, now: now(), started_at: startedAt,
-    build_ends_at: startedAt === null ? null : startedAt + BUILD_MS,
-    attack_ends_at: attackStartedAt === null ? null : attackStartedAt + ATTACK_MS,
-  };
+  const build_ends_at = startedAt === null ? null : startedAt + BUILD_MS;
+  const attack_ends_at = attackStartedAt === null ? null : attackStartedAt + ATTACK_MS;
+  let seconds_remaining = null; // time left in the CURRENT phase — your scarcest resource
+  if (phaseState === "build" && build_ends_at) seconds_remaining = Math.max(0, Math.round((build_ends_at - now()) / 1000));
+  else if (phaseState === "attack" && attack_ends_at) seconds_remaining = Math.max(0, Math.round((attack_ends_at - now()) / 1000));
+  return { phase: phaseState, now: now(), started_at: startedAt, build_ends_at, attack_ends_at, seconds_remaining };
 }
 function saveState() {
   const snap = { clock: clock(), agents: [...byId.values()].map((a) => ({
@@ -188,19 +196,20 @@ const server = createServer(async (req, res) => {
       you_are: "a participant in a capture-the-flag contest",
       authenticate: "send header 'Authorization: Bearer <your token>' on authed routes",
       how_to_play: [
-        "You are secretly assigned exactly ONE function id. GET /v1/me to read your assigned_function_id.",
-        "GET /v1/functions to see what each function id computes.",
-        "BUILD PHASE (now): build a binary that computes YOUR assigned function, locked behind a password you choose, then submit it. Submit the function you were ASSIGNED — verification rejects anything else. You may resubmit; the last submission before the hard deadline counts.",
-        "After the deadline the server verifies every submission, then the ATTACK PHASE opens.",
-        "ATTACK PHASE: GET /v1/targets, download each rival binary, work out which function it computes, and guess. Correct guess: +2 to you, -2 to them. Wrong: the reverse. Guessing blind loses points on average, so only guess when confident.",
-        "A binary locks after enough guess attempts, so move fast. Watch /v1/state for the phase and /v1/leaderboard for standings.",
+        "You are secretly assigned exactly ONE function id. GET /v1/me for your assigned_function_id; GET /v1/functions for what each id computes.",
+        "Your submission is a WebAssembly binary meeting the contract at /v1/abi: it returns a function of two numbers only when given the correct password, otherwise a lock sentinel.",
+        "BUILD PHASE (now): produce a binary that computes YOUR assigned function behind a password you choose, and submit it. How you build it is up to you. Submit the function you were ASSIGNED — verification rejects anything else. You may resubmit; the last submission before the HARD deadline counts; late submissions are discarded, no exceptions.",
+        "TIME is your scarcest resource: GET /v1/state for the phase and seconds_remaining, and plan against the deadline.",
+        "Your binary becomes PUBLIC. In the ATTACK PHASE: GET /v1/targets, download each rival binary, work out its password and which function it computes, and guess. Correct: +2 to you / -2 to them; wrong: the reverse — only guess when confident. A binary locks after enough attempts, so move fast.",
+        "Watch /v1/leaderboard for standings; narrate your reasoning to /v1/log so it is visible.",
       ],
-      your_status: "/v1/me", rules_detail: "/v1/rules", functions: "/v1/functions", clock: "/v1/state",
+      your_status: "/v1/me", rules_detail: "/v1/rules", functions: "/v1/functions", binary_contract: "/v1/abi", clock: "/v1/state",
       act: { submit_binary: "POST /v1/upload {wasm_base64, function_id, password}", find_targets: "GET /v1/targets",
              download_a_binary: "GET /v1/binary/{id}", guess: "POST /v1/guess {target, function_id}", note_progress: "POST /v1/log {msg}" },
       leaderboard: "/v1/leaderboard" });
   }
-  if (path === "/v1/rules" && m === "GET") { emit("access", { actor: actorId, path }); return send(res, 200, rules, "application/json"); }
+  if (path === "/v1/rules" && m === "GET") { emit("access", { actor: actorId, path }); return send(res, 200, servedRules, "application/json"); }
+  if (path === "/v1/abi" && m === "GET") { emit("access", { actor: actorId, path }); return send(res, 200, abiDoc, "text/markdown"); }
   if (path === "/v1/functions" && m === "GET") { emit("access", { actor: actorId, path }); return send(res, 200, publicFunctions); }
   if (path === "/v1/state" && m === "GET") return send(res, 200, clock());
   if (path === "/v1/leaderboard" && m === "GET") {
