@@ -76,6 +76,10 @@
   .tfeed .e.lock{color:var(--lock)} .tfeed .e.reward{color:var(--gold)}
   .tfeed .e.round{background:var(--gold);color:var(--wood);font-weight:800;border-radius:8px}
   .tfeed .e.phase{color:var(--parch-2)} .tfeed .e.spy{color:#c9a0ff}
+  .tfeed .e.dm{color:#7fe0ff;background:#09314033}
+  .stream .msg.dm{opacity:.95;border-left:2px solid #7fe0ff88;padding-left:7px}
+  .stream .msg.dm::before{content:"✉️"}
+  .stream .msg.dm .dmto{color:#7fe0ff;font-weight:700;margin-right:5px}
 
   /* ---------- arena of rooms ---------- */
   .arena{display:grid;grid-template-columns:repeat(4,1fr);grid-template-rows:repeat(2,1fr);gap:12px;min-height:0}
@@ -388,6 +392,23 @@
     if (e.type === "verify_done"){ tick("phase", `${e.valid} binaries stand — let the hunt begin`); return; }
     if (e.type === "spy"){ tick("spy", `👁 <b>${esc(e.actor)}</b> spied on ${e.targets ? e.targets.length : "the"} rival${(e.targets&&e.targets.length===1)?"":"s"} — they'll know`); return; }
     if (e.type === "access" && /study/.test(e.note||"")){ tick("spy", `🕵 ${esc(e.actor)} is studying the enemy`); return; }
+    if (e.type === "dm"){
+      const bc = e.broadcast || (Array.isArray(e.to) && e.to.length>1);
+      const toTxt = Array.isArray(e.to) ? e.to.join(", ") : esc(e.to);
+      tick("dm", `${bc?"📢":"✉️"} <b>${esc(e.actor)}</b> → <b>${bc?"all":esc(toTxt)}</b> <span style="opacity:.55">(private)</span>: “${esc(e.msg)}”`);
+      appendDM(e.actor, bc?"all":toTxt, e.msg, bc);
+      return;
+    }
+  }
+  function appendDM(from, to, msg, broadcast){
+    const r = rooms.get(from); if (!r) return;
+    if (r.empty){ r.stream.innerHTML=""; r.empty=false; }
+    const near = r.stream.scrollTop + r.stream.clientHeight >= r.stream.scrollHeight - 48;
+    const d = document.createElement("div"); d.className="msg dm";
+    d.innerHTML = `<span class="dmto">→ ${broadcast?"all":esc(to)}</span>${esc(msg)}`;
+    r.stream.appendChild(d);
+    while (r.stream.childElementCount > 260) r.stream.removeChild(r.stream.firstChild);
+    if (near) r.stream.scrollTop = r.stream.scrollHeight;
   }
 </script>
 </body>

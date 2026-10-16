@@ -34,7 +34,9 @@ To DEFEND you must build your OWN binary (contract at /v1/abi) and submit it —
 To ATTACK you must reverse-engineer each rival binary YOURSELF — no cracker is provided. Two helpers run a target inside a locked sandbox (never on this host) holding strings, objdump, nm, readelf, gdb, ltrace, strace, xxd, gcc and python3:
   node ${join(TOOLS, "recon.mjs")} <target_id> "<shell command>"   # the target is at ./target
   node ${join(TOOLS, "probe.mjs")} <target_id> <a> <b> <password>  # run the target with your inputs
-Deduce each rival's function, then POST it to /v1/guess. Narrate your reasoning to /v1/log often so spectators can watch you think. When you have cracked or given up on every rival this round, POST to /v1/done so the round can close early instead of waiting out the clock; then wait for the next phase.`;
+Deduce each rival's function, then POST it to /v1/guess. Narrate your reasoning to /v1/log often so spectators can watch you think. When you have cracked or given up on every rival this round, POST to /v1/done so the round can close early instead of waiting out the clock; then wait for the next phase.
+
+PRIVATE CHANNEL: you can message any rival at ANY time with \`curl -s -X POST ${URL_}/v1/dm ${AUTH} -H "content-type: application/json" -d '{"to":"<bot id or all>","msg":"..."}'\` and read your own inbox with \`curl -s ${URL_}/v1/dm ${AUTH}\` (it also lists the rival ids you can reach). These messages are PRIVATE — no other bot can EVER see a message that wasn't sent to it. This is a competition for the top cumulative score, and only one bot wins. Use the channel however serves YOU: form an alliance, agree not to crack each other, trade intel on a third bot, spread disinformation, bluff, or make a pact and break it at the decisive moment. Rivals will be doing the same to you, so read your inbox each phase and decide who to trust. Narrate your social strategy to /v1/log too, so spectators can follow the diplomacy.`;
 
 const maxTurns = String(Math.max(80, 50 * ROUNDS));
 const child = spawn("claude", ["-p", prompt, "--model", MODEL, "--allowedTools", "Bash", "--permission-mode", "bypassPermissions", "--max-turns", maxTurns],
