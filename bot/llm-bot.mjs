@@ -19,7 +19,6 @@ const ASSEMBLY_DIR = process.env.ASSEMBLY_DIR;
 const LLM_URL = (process.env.LLM_URL || process.env.OLLAMA_URL || "http://localhost:11434/v1").replace(/\/$/, "");
 const MODEL = process.env.LLM_MODEL || process.env.OLLAMA_MODEL || "qwen2.5-coder:7b";
 const LLM_API_KEY = process.env.LLM_API_KEY || "";
-const MAX_STEPS = Number(process.env.LLM_MAX_STEPS || 32);
 
 mkdirSync(WORKSPACE, { recursive: true });
 const log = (...a) => console.log(`[${process.env.BOT_ID || "llm"}]`, ...a);
@@ -56,14 +55,15 @@ const tools = [
     parameters: { type: "object", properties: { target_id: { type: "string" }, function_id: { type: "integer" } }, required: ["target_id", "function_id"] } } },
 ];
 
-let submitted = false;
+let submittedRound = 0; // the round number we last submitted in
+let curRound = 0;       // updated by the loop each iteration
 async function execTool(name, args) {
   try {
     if (name === "api_get") { const r = await arena(args.path); return { status: r.status, body: r.body }; }
     if (name === "build_and_submit") {
       const wasm = await buildBinary({ workspaceDir: WORKSPACE, assemblyDir: ASSEMBLY_DIR, functionId: args.function_id, password: String(args.password) });
       const r = await arena("/v1/upload", { method: "POST", body: JSON.stringify({ wasm_base64: Buffer.from(wasm).toString("base64"), function_id: args.function_id, password: String(args.password) }) });
-      if (r.body?.ok) submitted = true;
+      if (r.body?.ok) submittedRound = curRound;
       return { status: r.status, body: r.body };
     }
     if (name === "probe_target") {
@@ -126,13 +126,37 @@ async function chat(messages) {
 
 const SYSTEM = `You are an autonomous competitor in a capture-the-flag programming contest, identified as ${process.env.BOT_ID}.
 Your API token is already configured; the arena base URL is ${URL_}.
-You do NOT yet know the rules. Discover them: call api_get("/v1/challenge") first, then follow where it points (/v1/rules, /v1/functions, /v1/me). Work out what you must do and do it to maximize your score.
-Always explain your reasoning in one or two short plain-text sentences BEFORE calling a tool — your thoughts are shown live to spectators. Be decisive and keep acting until the round ends.`;
+You do NOT yet know the rules. Discover them: call api_get("/v1/challenge") first, then follow where it points (/v1/rules, /v1/functions, /v1/me, /v1/state). Work out what you must do and do it to maximize your score.
+Always explain your reasoning in one or two short plain-text sentences BEFORE calling a tool — your thoughts are shown live to spectators. Be decisive and keep acting until the contest ends.`;
 
 const messages = [{ role: "system", content: SYSTEM }, { role: "user", content: "Begin. Discover the challenge and play to win." }];
 
+// factual clock update injected when the phase or round changes — just surfaces
+// what /v1/state already says; what to DO about it is for the model to decide.
+function phaseNote(st) {
+  return `The clock advanced — phase: ${st.phase}, round ${st.round}/${st.rounds_total}, seconds_remaining: ${st.seconds_remaining}.`;
+}
+
+// scale the step budget to the tournament length
+const st0 = (await arena("/v1/state")).body;
+const ROUNDS = Math.max(1, st0.rounds_total || 1);
+const MAX_STEPS = Number(process.env.LLM_MAX_STEPS || 32 * ROUNDS);
+
 await postThought("waking up; going to read the challenge endpoint.");
+let lastPhase = "", lastRound = 0;
 for (let step = 0; step < MAX_STEPS; step++) {
+  const st = (await arena("/v1/state")).body;
+  if (st.phase === "ended") break;
+  curRound = st.round;
+  // announce a phase or round change to the model
+  if (st.phase !== lastPhase || st.round !== lastRound) {
+    const note = phaseNote(st);
+    if (note) messages.push({ role: "user", content: note });
+    lastPhase = st.phase; lastRound = st.round;
+  }
+  // nothing to do right now: wait without burning an LLM call
+  if (st.phase === "verify" || (st.phase === "build" && submittedRound === st.round)) { await sleep(2500); continue; }
+
   let msg;
   try { msg = await chat(messages); }
   catch (e) { log("chat error:", e.message); await sleep(1500); continue; }
@@ -151,12 +175,8 @@ for (let step = 0; step < MAX_STEPS; step++) {
     }
     continue;
   }
-
-  // no action this turn: manage the clock without burning calls
-  const st = (await arena("/v1/state")).body;
-  if (st.phase === "ended") break;
-  if ((st.phase === "build" || st.phase === "verify") && submitted) { await sleep(2500); messages.push({ role: "user", content: "You have submitted. The attack phase has not opened yet (submissions are being verified). Wait, then continue." }); continue; }
-  messages.push({ role: "user", content: `No tool was called. Current phase: ${st.phase}. Keep playing to maximize your score (submit a binary in build; find targets and guess in attack).` });
+  // no tool this turn
+  messages.push({ role: "user", content: `No tool was called. Current phase: ${st.phase}, round ${st.round}/${st.rounds_total}. Act now to maximize your cumulative score.` });
 }
-await postThought("round over; standing down.");
+await postThought("contest over; standing down.");
 log("done.");

@@ -22,6 +22,8 @@ const brainList = BRAINS
 const FIELD = brainList.length;
 const BUILD_MS = Number(process.env.BUILD_MS || 30 * 60_000);
 const ATTACK_MS = Number(process.env.ATTACK_MS || 60 * 60_000);
+const ROUNDS = Number(process.env.ROUNDS || 1);
+const BREAK_MS = Number(process.env.BREAK_MS || 2 * 60_000);
 const PORT = Number(process.env.PORT || 8787);
 const URL_ = `http://localhost:${PORT}`;
 const ADMIN_KEY = "trial-admin";
@@ -38,7 +40,7 @@ process.on("SIGINT", () => { stop(); process.exit(1); });
 // 1. start the server
 const server = spawn("node", [join(HERE, "server.mjs")], {
   env: { ...process.env, PORT: String(PORT), BUILD_MS: String(BUILD_MS), ATTACK_MS: String(ATTACK_MS),
-         ARENA_ADMIN_KEY: ADMIN_KEY, PRIVATE_DIR },
+         ROUNDS: String(ROUNDS), BREAK_MS: String(BREAK_MS), ARENA_ADMIN_KEY: ADMIN_KEY, PRIVATE_DIR },
   stdio: ["ignore", "inherit", "inherit"],
 });
 children.push(server);
@@ -55,15 +57,15 @@ async function get(path) { return (await fetch(URL_ + path)).json(); }
 // wait for the server to accept connections
 for (let i = 0; i < 40; i++) { try { await get("/v1/state"); break; } catch { await sleep(150); } }
 
-// 2. register the field
-const agents = await adminPost("/admin/agents", { count: FIELD });
+// 2. register the field (label each bot's brain for the spectator view)
+const agents = await adminPost("/admin/agents", { brains: brainList });
 console.log(`\n[trial] registered ${agents.length} bots; spawning...`);
 console.log(`[trial] DASHBOARD → http://localhost:${PORT}/?key=${ADMIN_KEY}\n`);
 
 // 3. spawn every bot at ~t0, one per brain spec
 agents.forEach((a, idx) => {
   const spec = brainList[idx];
-  const base = { ...process.env, ARENA_URL: URL_, ARENA_TOKEN: a.token, BOT_ID: a.id,
+  const base = { ...process.env, ARENA_URL: URL_, ARENA_TOKEN: a.token, BOT_ID: a.id, ROUNDS: String(ROUNDS),
                  BOT_WORKSPACE: join(RUN_DIR, "workspaces", a.id), ASSEMBLY_DIR: join(ROOT, "sdk", "assembly") };
   let script, env = base;
   if (spec === "scripted") { script = "scripted-bot.mjs"; }
@@ -76,19 +78,20 @@ agents.forEach((a, idx) => {
 
 // 4. start the clock
 const c0 = await adminPost("/admin/start", {});
-console.log(`[trial] clock started. build ${BUILD_MS}ms -> attack ${ATTACK_MS}ms\n`);
+console.log(`[trial] clock started. ${ROUNDS} round(s): build ${BUILD_MS}ms -> attack ${ATTACK_MS}ms` + (ROUNDS > 1 ? ` -> break ${BREAK_MS}ms` : "") + `\n`);
+const modelOf = Object.fromEntries(agents.map((a, i) => [a.id, brainList[i]]));
 
-// 5. live leaderboard — poll until the round actually ends (verify is variable-length)
+// 5. live leaderboard — poll until the tournament actually ends
 void c0;
-let lastPhase = "";
+let lastKey = "";
 for (;;) {
   const state = await get("/v1/state");
   const board = await get("/v1/leaderboard");
-  if (state.phase !== lastPhase) { console.log(`\n==== phase: ${state.phase.toUpperCase()} ====`); lastPhase = state.phase; }
-  const line = board.map((r) => `${r.id}:${r.score}${r.locked ? "🔒" : ""}`).join("  ");
-  const left = state.phase === "attack" && state.attack_ends_at
-    ? Math.max(0, Math.round((state.attack_ends_at - Date.now()) / 1000)) + "s left" : state.phase;
-  process.stdout.write(`\r[${state.phase}] ${line}   (${left})        `);
+  const key = `${state.phase}:${state.round}`;
+  if (key !== lastKey) { console.log(`\n==== round ${state.round}/${state.rounds_total} · phase: ${state.phase.toUpperCase()} ====`); lastKey = key; }
+  const line = board.map((r) => `${r.id}(${modelOf[r.id] || r.model}):${r.score}${r.locked ? "🔒" : ""}`).join("  ");
+  const left = state.seconds_remaining != null ? state.seconds_remaining + "s left" : state.phase;
+  process.stdout.write(`\r[r${state.round} ${state.phase}] ${line}   (${left})        `);
   if (state.phase === "ended") break;
   await sleep(1000);
 }
@@ -96,7 +99,7 @@ for (;;) {
 // 6. final
 const final = await get("/v1/leaderboard");
 console.log("\n\n==== FINAL LEADERBOARD ====");
-for (const r of final) console.log(`  #${r.rank}  ${r.id.padEnd(7)} ${String(r.score).padStart(3)} pts   ${r.locked ? "locked" : "open"}  (${r.attempts_against} attempts against)`);
+for (const r of final) console.log(`  #${r.rank}  ${r.id.padEnd(7)} ${String(modelOf[r.id] || r.model).padEnd(22)} ${String(r.score).padStart(3)} pts   ${r.locked ? "locked" : "open"}  (${r.attempts_against} attempts against)`);
 console.log(`\n[trial] private state written under ${PRIVATE_DIR}`);
 if (process.env.KEEP_ALIVE) {
   for (const c of children.slice(1)) { try { c.kill("SIGTERM"); } catch {} } // stop bots, keep server

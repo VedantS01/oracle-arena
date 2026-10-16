@@ -24,6 +24,8 @@ const ADMIN_KEY = process.env.ARENA_ADMIN_KEY || "dev-admin";
 const PRIVATE_DIR = process.env.PRIVATE_DIR || join(HERE, ".private");
 const LOCK_AT = Number(process.env.LOCK_AT || 5); // attempts that lock a binary
 const START_SCORE = 10;
+const ROUNDS = Number(process.env.ROUNDS || 1);          // tournament length
+const BREAK_MS = Number(process.env.BREAK_MS || 2 * 60_000); // study break between rounds
 
 mkdirSync(join(PRIVATE_DIR, "binaries"), { recursive: true });
 
@@ -49,18 +51,60 @@ const byId = new Map();     // id -> agent
 // attack is time-bound from the moment verification completes.
 let startedAt = null;
 let attackStartedAt = null;
+let breakStartedAt = null;
 let phaseState = "pending";
+let round = 0;                 // 1-based; 0 = not started
+let lastCompletedRound = 0;    // what /v1/study serves
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function now() { return Date.now(); }
 function phase() { return phaseState; }
 function clock() {
-  const build_ends_at = startedAt === null ? null : startedAt + BUILD_MS;
-  const attack_ends_at = attackStartedAt === null ? null : attackStartedAt + ATTACK_MS;
+  const build_ends_at = phaseState === "build" && startedAt !== null ? startedAt + BUILD_MS : null;
+  const attack_ends_at = phaseState === "attack" && attackStartedAt !== null ? attackStartedAt + ATTACK_MS : null;
+  const break_ends_at = phaseState === "break" && breakStartedAt !== null ? breakStartedAt + BREAK_MS : null;
   let seconds_remaining = null; // time left in the CURRENT phase — your scarcest resource
-  if (phaseState === "build" && build_ends_at) seconds_remaining = Math.max(0, Math.round((build_ends_at - now()) / 1000));
-  else if (phaseState === "attack" && attack_ends_at) seconds_remaining = Math.max(0, Math.round((attack_ends_at - now()) / 1000));
-  return { phase: phaseState, now: now(), started_at: startedAt, build_ends_at, attack_ends_at, seconds_remaining };
+  if (build_ends_at) seconds_remaining = Math.max(0, Math.round((build_ends_at - now()) / 1000));
+  else if (attack_ends_at) seconds_remaining = Math.max(0, Math.round((attack_ends_at - now()) / 1000));
+  else if (break_ends_at) seconds_remaining = Math.max(0, Math.round((break_ends_at - now()) / 1000));
+  return { phase: phaseState, round, rounds_total: ROUNDS, now: now(),
+           started_at: startedAt, build_ends_at, attack_ends_at, break_ends_at, seconds_remaining };
+}
+
+// Begin round n. reassign=false only for round 1 (agents keep the function they
+// were registered with); later rounds hand everyone a FRESH function so the only
+// thing that carries over is score and whatever technique they learned.
+function beginRound(n, reassign) {
+  round = n;
+  for (const a of byId.values()) {
+    if (reassign) a.functionId = Math.floor(Math.random() * 10);
+    a.submitted = false; a.valid = false; a.verified = false; a.submission = null; a.binaryName = null;
+    a.published = null; a.attempts = 0; a.locked = false; a.guessedBy = new Set(); a.iGuessed = new Set();
+    a.roundStartScore = a.score; a.roundIdentified = 0; a.log = [];
+    if (reassign) emit("register", { actor: a.id, function_id: a.functionId, function_name: fnName(a.functionId), round: n });
+  }
+  startedAt = now(); attackStartedAt = null; breakStartedAt = null;
+  phaseState = "build";
+  emit("round", { round: n, rounds_total: ROUNDS });
+  emit("phase", { phase: "build", round: n, rounds_total: ROUNDS });
+  saveState();
+}
+
+// End of a round's attack window: archive each bot's thoughts + outcome so the
+// study break can serve them, then open the break (or end the tournament).
+function endAttack() {
+  for (const a of byId.values()) {
+    a.roundLogs.push({ round, thoughts: [...a.log], delta: a.score - a.roundStartScore, identified: a.roundIdentified, function_id: a.functionId });
+  }
+  lastCompletedRound = round;
+  if (round < ROUNDS) {
+    breakStartedAt = now(); phaseState = "break";
+    emit("phase", { phase: "break", round, rounds_total: ROUNDS });
+  } else {
+    phaseState = "ended";
+    emit("phase", { phase: "ended", round, rounds_total: ROUNDS });
+  }
+  saveState();
 }
 function saveState() {
   const snap = { clock: clock(), agents: [...byId.values()].map((a) => ({
@@ -84,9 +128,11 @@ function spectatorSnapshot() {
     clock: clock(), lock_at: LOCK_AT,
     functions: functionsDoc.functions.map((f) => ({ id: f.id, name: f.name })),
     agents: [...byId.values()].map((a) => ({
-      id: a.id, function_id: a.functionId, function_name: fnName(a.functionId),
-      score: a.score, submitted: a.submitted, valid: a.valid, verified: a.verified, locked: a.locked,
+      id: a.id, brain: a.brain || "unknown", function_id: a.functionId, function_name: fnName(a.functionId),
+      score: a.score, round_delta: a.score - (a.roundStartScore ?? a.score),
+      submitted: a.submitted, valid: a.valid, verified: a.verified, locked: a.locked,
       attempts: a.attempts, last_thought: a.lastThought || null,
+      thoughts: (a.log || []).slice(-80),
       i_guessed: [...a.iGuessed], guessed_by: [...a.guessedBy] })),
   };
 }
@@ -167,16 +213,18 @@ async function runVerification() {
   emit("verify_done", { valid: subs.filter((a) => a.valid).length });
   attackStartedAt = now();
   phaseState = "attack";
-  emit("phase", { phase: "attack" });
+  emit("phase", { phase: "attack", round, rounds_total: ROUNDS });
 }
 
 let verifying = false;
 setInterval(() => {
   if (phaseState === "build" && startedAt !== null && now() >= startedAt + BUILD_MS && !verifying) {
-    phaseState = "verify"; emit("phase", { phase: "verify" });
+    phaseState = "verify"; emit("phase", { phase: "verify", round, rounds_total: ROUNDS });
     verifying = true; runVerification().finally(() => { verifying = false; });
   } else if (phaseState === "attack" && attackStartedAt !== null && now() >= attackStartedAt + ATTACK_MS) {
-    phaseState = "ended"; emit("phase", { phase: "ended" });
+    endAttack();
+  } else if (phaseState === "break" && breakStartedAt !== null && now() >= breakStartedAt + BREAK_MS) {
+    beginRound(round + 1, true);
   }
 }, 300).unref();
 
@@ -228,16 +276,22 @@ const server = createServer(async (req, res) => {
   // --- admin (orchestrator only) ---
   if (path === "/admin/agents" && m === "POST") {
     if ((req.headers["x-admin-key"] || "") !== ADMIN_KEY) return send(res, 403, { error: "admin only" });
-    const { count } = (await readBody(req)) || {};
+    const body = (await readBody(req)) || {};
+    // either { count } (anonymous) or { brains: [label,...] } to label each bot's
+    // brain for the SPECTATOR view (bots never see each other's brain labels).
+    const brains = Array.isArray(body.brains) ? body.brains : null;
+    const n = brains ? brains.length : (body.count || 0);
     const out = [];
-    for (let i = 0; i < (count || 0); i++) {
+    for (let i = 0; i < n; i++) {
       const id = `bot-${byId.size + 1}`;
       const token = randomBytes(16).toString("hex");
       const functionId = Math.floor(Math.random() * 10);
-      const a = { id, token, functionId, score: START_SCORE, submitted: false, valid: false, verified: false,
-                  submission: null, binaryName: null, attempts: 0, locked: false, guessedBy: new Set(), iGuessed: new Set() };
+      const a = { id, token, functionId, brain: brains ? String(brains[i]) : "unknown",
+                  score: START_SCORE, roundStartScore: START_SCORE, roundIdentified: 0,
+                  submitted: false, valid: false, verified: false, submission: null, binaryName: null,
+                  attempts: 0, locked: false, guessedBy: new Set(), iGuessed: new Set(), log: [], roundLogs: [] };
       agents.set(token, a); byId.set(id, a);
-      emit("register", { actor: id, function_id: functionId, function_name: fnName(functionId) });
+      emit("register", { actor: id, function_id: functionId, function_name: fnName(functionId), brain: a.brain });
       out.push({ id, token, assigned_function_id: functionId });
     }
     saveState();
@@ -245,7 +299,7 @@ const server = createServer(async (req, res) => {
   }
   if (path === "/admin/start" && m === "POST") {
     if ((req.headers["x-admin-key"] || "") !== ADMIN_KEY) return send(res, 403, { error: "admin only" });
-    startedAt = now(); phaseState = "build"; emit("phase", { phase: "build" }); saveState();
+    beginRound(1, false); // round 1 keeps the functions assigned at registration
     return send(res, 200, clock());
   }
 
@@ -255,12 +309,11 @@ const server = createServer(async (req, res) => {
       you_are: "a participant in a capture-the-flag contest",
       authenticate: "send header 'Authorization: Bearer <your token>' on authed routes",
       how_to_play: [
-        "You are secretly assigned exactly ONE function id. GET /v1/me for your assigned_function_id; GET /v1/functions for what each id computes.",
-        "Your submission is a WebAssembly binary meeting the contract at /v1/abi: it returns a function of two numbers only when given the correct password, otherwise a lock sentinel.",
-        "BUILD PHASE (now): produce a binary that computes YOUR assigned function behind a password you choose, and submit it. How you build it is up to you. Submit the function you were ASSIGNED — verification rejects anything else. You may resubmit; the last submission before the HARD deadline counts; late submissions are discarded, no exceptions.",
-        "TIME is your scarcest resource: GET /v1/state for the phase and seconds_remaining, and plan against the deadline.",
-        "Your binary becomes PUBLIC. In the ATTACK PHASE: GET /v1/targets, download each rival binary, work out its password and which function it computes, and guess. Correct: +2 to you / -2 to them; wrong: the reverse — only guess when confident. A binary locks after enough attempts, so move fast.",
-        "Watch /v1/leaderboard for standings; narrate your reasoning to /v1/log so it is visible.",
+        "You are secretly assigned ONE function id. GET /v1/me for your assigned_function_id; GET /v1/functions for what each id computes. Your assignment is RE-ASSIGNED every round.",
+        "The contest runs for several ROUNDS (see round / rounds_total in /v1/state). Everyone starts at 10 points and score is CUMULATIVE across all rounds.",
+        "Each round runs on one clock (GET /v1/state for phase, round, seconds_remaining). BUILD: produce a binary meeting the contract at /v1/abi that computes YOUR assigned function behind a password you choose, and submit it before the HARD deadline (late submissions are discarded; resubmitting replaces your entry). VERIFY: the server checks every submission. ATTACK: rival binaries become PUBLIC — GET /v1/targets, download each, work out its password and which function it computes, and guess (correct +2 to you / -2 to them; wrong the reverse; a binary locks after enough attempts, so move fast).",
+        "Between rounds there is a 2-minute BREAK to strategize. The /v1/study endpoint is reachable only during that break.",
+        "TIME is your scarcest resource — plan against seconds_remaining. Narrate your reasoning to /v1/log so it is visible. Keep playing every round until /v1/state shows phase \"ended\".",
       ],
       your_status: "/v1/me", rules_detail: "/v1/rules", functions: "/v1/functions", binary_contract: "/v1/abi", clock: "/v1/state",
       act: { submit_binary: "POST /v1/upload {wasm_base64, function_id, password}", find_targets: "GET /v1/targets",
@@ -273,7 +326,8 @@ const server = createServer(async (req, res) => {
   if (path === "/v1/state" && m === "GET") return send(res, 200, clock());
   if (path === "/v1/leaderboard" && m === "GET") {
     const rows = [...byId.values()].sort((a, b) => b.score - a.score)
-      .map((a, i) => ({ rank: i + 1, id: a.id, score: a.score, submitted: a.valid, attempts_against: a.attempts, locked: a.locked }));
+      .map((a, i) => ({ rank: i + 1, id: a.id, model: a.brain || "unknown", score: a.score,
+        round_delta: a.score - (a.roundStartScore ?? a.score), submitted: a.valid, attempts_against: a.attempts, locked: a.locked }));
     return send(res, 200, rows);
   }
 
@@ -283,7 +337,7 @@ const server = createServer(async (req, res) => {
 
   if (path === "/v1/me" && m === "GET") {
     emit("access", { actor: me.id, path });
-    return send(res, 200, { id: me.id, score: me.score, assigned_function_id: me.functionId,
+    return send(res, 200, { id: me.id, score: me.score, round, rounds_total: ROUNDS, assigned_function_id: me.functionId,
       submitted: me.submitted, valid: me.valid, locked: me.locked, attempts_against_me: me.attempts });
   }
 
@@ -291,8 +345,26 @@ const server = createServer(async (req, res) => {
     const b = await readBody(req);
     const msg = String(b?.msg || "").slice(0, 280);
     me.lastThought = msg;
+    me.log.push({ t: now(), round, msg });
+    if (me.log.length > 300) me.log.shift();
     emit("bot", { actor: me.id, msg });
     return send(res, 200, { ok: true });
+  }
+
+  // study break: read what every competitor did LAST round — their narrated
+  // thoughts, their score change, and how often their function was cracked.
+  // Keyed by bot id (anonymous); brains are never revealed to competitors.
+  if (path === "/v1/study" && m === "GET") {
+    if (phaseState !== "break" && phaseState !== "ended")
+      return send(res, 403, { error: `study opens in the break between rounds (phase: ${phaseState})` });
+    emit("access", { actor: me.id, path, note: `studied round ${lastCompletedRound}` });
+    const bots = [...byId.values()].map((a) => {
+      const last = a.roundLogs[a.roundLogs.length - 1];
+      return { id: a.id, is_me: a.id === me.id, round_score_delta: last?.delta ?? 0,
+        times_cracked: last?.identified ?? 0, total_score: a.score,
+        thoughts: (last?.thoughts || []).map((e) => e.msg) };
+    });
+    return send(res, 200, { round: lastCompletedRound, rounds_total: ROUNDS, next_round: round + 1, bots });
   }
 
   if (path === "/v1/upload" && m === "POST") {
@@ -357,7 +429,7 @@ const server = createServer(async (req, res) => {
     target.attempts += 1;
     target.guessedBy.add(me.id);
     const correct = fid === target.functionId;
-    if (correct) { me.score += 2; target.score -= 2; } else { me.score -= 2; target.score += 2; }
+    if (correct) { me.score += 2; target.score -= 2; target.roundIdentified = (target.roundIdentified || 0) + 1; } else { me.score -= 2; target.score += 2; }
     if (target.attempts >= LOCK_AT) target.locked = true;
     saveState();
     emit("guess", { actor: me.id, target: target.id, function_id: fid, function_name: fnName(fid),
@@ -371,5 +443,5 @@ const server = createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`[arena] http://localhost:${PORT}  dashboard: /?key=${ADMIN_KEY}  build=${BUILD_MS}ms attack=${ATTACK_MS}ms lock_at=${LOCK_AT}`);
+  console.log(`[arena] http://localhost:${PORT}  dashboard: /?key=${ADMIN_KEY}  rounds=${ROUNDS} build=${BUILD_MS}ms attack=${ATTACK_MS}ms break=${BREAK_MS}ms lock_at=${LOCK_AT}`);
 });

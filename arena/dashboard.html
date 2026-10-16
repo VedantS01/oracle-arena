@@ -3,69 +3,95 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Oracle Arena — Control Room</title>
+<title>Oracle Arena</title>
+<meta name="description" content="Live control room for the Oracle Arena reverse-engineering tournament.">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
 <style>
   :root {
     --bg:#eceff4; --surface:#ffffff; --surface-2:#f3f6fa; --line:#ccd4e0;
     --fg:#1a2230; --muted:#5a6678; --accent:#4f46e5;
     --gain:#12855a; --gain-bg:#d8efe4; --loss:#c63a30; --loss-bg:#f6dedb;
-    --lock:#b0771a; --lock-bg:#f5e8cf;
+    --lock:#b0771a; --lock-bg:#f5e8cf; --spy:#7c3aed; --spy-bg:#ece3fb;
     --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
     --sans:"IBM Plex Sans",system-ui,-apple-system,sans-serif;
   }
-  @media (prefers-color-scheme:dark){:root{
+  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
     --bg:#0e1320; --surface:#151d2c; --surface-2:#1a2333; --line:#2b3749;
     --fg:#dce3ef; --muted:#93a1b7; --accent:#8f8ff6;
     --gain:#37c48d; --gain-bg:#10352a; --loss:#f26c60; --loss-bg:#3a1f1d;
-    --lock:#e2a83c; --lock-bg:#392c13;
+    --lock:#e2a83c; --lock-bg:#392c13; --spy:#b794f6; --spy-bg:#241a3a;
     color-scheme:dark;
   }}
+  :root[data-theme="dark"]{
+    --bg:#0e1320; --surface:#151d2c; --surface-2:#1a2333; --line:#2b3749;
+    --fg:#dce3ef; --muted:#93a1b7; --accent:#8f8ff6;
+    --gain:#37c48d; --gain-bg:#10352a; --loss:#f26c60; --loss-bg:#3a1f1d;
+    --lock:#e2a83c; --lock-bg:#392c13; --spy:#b794f6; --spy-bg:#241a3a;
+    color-scheme:dark;
+  }
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--sans);font-size:14px;line-height:1.5}
-  .wrap{max-width:1200px;margin:0 auto;padding:18px}
-  header{display:flex;flex-wrap:wrap;gap:14px;align-items:baseline;justify-content:space-between;margin-bottom:16px}
+  .wrap{max-width:1200px;margin:0 auto;padding:18px 16px}
+  header{display:flex;flex-wrap:wrap;gap:12px 16px;align-items:baseline;justify-content:space-between;margin-bottom:6px}
   h1{font-family:var(--mono);font-weight:600;font-size:20px;margin:0;letter-spacing:-0.01em}
   h1 .sub{color:var(--muted);font-weight:500}
-  .status{display:flex;gap:10px;align-items:center;font-family:var(--mono);font-size:13px}
+  .status{display:flex;gap:10px;align-items:center;font-family:var(--mono);font-size:13px;flex-wrap:wrap}
+  .round{font-family:var(--mono);font-weight:600;font-size:13px;padding:4px 11px;border-radius:999px;background:var(--accent);color:#fff}
   .badge{padding:4px 11px;border-radius:999px;font-weight:600;border:1px solid var(--line);background:var(--surface)}
-  .badge.build{color:var(--accent)} .badge.attack{color:var(--loss)} .badge.ended{color:var(--muted)} .badge.pending{color:var(--muted)} .badge.verify{color:var(--lock)}
+  .badge.build{color:var(--accent)} .badge.attack{color:var(--loss)} .badge.ended{color:var(--muted)} .badge.pending{color:var(--muted)} .badge.verify{color:var(--lock)} .badge.break{color:var(--spy)}
   .dot{width:8px;height:8px;border-radius:50%;background:var(--loss)}
   .dot.on{background:var(--gain)}
-  .grid{display:grid;grid-template-columns:1.1fr 1fr;gap:16px}
+  .tagline{font-family:var(--mono);font-size:13px;color:var(--muted);margin:0 0 16px;min-height:19px}
+  .tagline b{color:var(--fg);font-weight:600}
+  .grid{display:grid;grid-template-columns:1.15fr 1fr;gap:16px}
   @media (max-width:860px){.grid{grid-template-columns:1fr}}
   .panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px;min-width:0}
   .panel h2{font-family:var(--mono);font-size:12px;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin:0 0 10px}
   table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
-  th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line)}
+  th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:baseline}
   th{font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted)}
   td.score{font-family:var(--mono);font-weight:600}
   .rank{color:var(--muted);font-family:var(--mono)}
-  .bots{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
-  .bot{border:1px solid var(--line);border-radius:10px;padding:10px;background:var(--surface-2)}
-  .bot .id{font-family:var(--mono);font-weight:600}
-  .bot .fn{font-family:var(--mono);font-size:12px;color:var(--accent);margin-top:2px}
-  .bot .meta{display:flex;justify-content:space-between;align-items:baseline;margin-top:8px}
-  .bot .pts{font-family:var(--mono);font-weight:600;font-size:16px}
-  .bot .thought{margin-top:8px;font-size:11px;line-height:1.45;color:var(--muted);font-style:italic;
-    border-top:1px dashed var(--line);padding-top:6px;min-height:30px;
-    display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
-  .bot .thought::before{content:"💭 ";font-style:normal}
-  .pill{font-family:var(--mono);font-size:10.5px;padding:2px 7px;border-radius:6px;font-weight:600;border:1px solid var(--line)}
+  .model{font-family:var(--mono);font-size:11.5px;color:var(--accent);word-break:break-all}
+  .delta{font-family:var(--mono);font-size:11px;font-weight:600;margin-left:6px}
+  .delta.up{color:var(--gain)} .delta.down{color:var(--loss)} .delta.zero{color:var(--muted)}
+  .pill{font-family:var(--mono);font-size:10.5px;padding:2px 7px;border-radius:6px;font-weight:600;border:1px solid var(--line);white-space:nowrap}
   .pill.building{color:var(--muted)} .pill.pending{color:var(--muted)}
   .pill.submitted{color:var(--gain);background:var(--gain-bg);border-color:transparent}
   .pill.verifying{color:var(--lock);background:var(--lock-bg);border-color:transparent}
   .pill.rejected{color:var(--loss);background:var(--loss-bg);border-color:transparent}
   .pill.locked{color:var(--lock);background:var(--lock-bg);border-color:transparent}
-  .feed{height:440px;overflow-y:auto;font-family:var(--mono);font-size:12px;display:flex;flex-direction:column;gap:3px}
+  /* expandable per-bot thought logs */
+  .logs{display:flex;flex-direction:column;gap:8px}
+  .bot{border:1px solid var(--line);border-radius:10px;background:var(--surface-2);overflow:hidden}
+  .bot-head{display:flex;align-items:center;gap:8px;padding:9px 11px;cursor:pointer;user-select:none}
+  .bot-head:hover{background:var(--line)}
+  .bot-head .tw{width:14px;color:var(--muted);font-family:var(--mono);flex:none;transition:transform .12s}
+  .bot.open .bot-head .tw{transform:rotate(90deg)}
+  .bot-head .id{font-family:var(--mono);font-weight:600;flex:none}
+  .bot-head .model{flex:1;min-width:0}
+  .bot-head .fn{font-family:var(--mono);font-size:11px;color:var(--muted);flex:none}
+  .bot-head .pts{font-family:var(--mono);font-weight:600;flex:none}
+  .bot-log{display:none;border-top:1px dashed var(--line);max-height:260px;overflow-y:auto;padding:8px 11px;
+    font-size:12px;line-height:1.5;flex-direction:column;gap:5px}
+  .bot.open .bot-log{display:flex}
+  .bot-log .t{color:var(--muted);font-style:italic}
+  .bot-log .t::before{content:"💭 ";font-style:normal}
+  .bot-log .rd{font-family:var(--mono);font-size:10px;color:var(--accent);text-transform:uppercase;letter-spacing:.05em;margin-top:4px}
+  .bot-log .empty{color:var(--muted);font-style:italic}
+  .feed{height:560px;overflow-y:auto;font-family:var(--mono);font-size:12px;display:flex;flex-direction:column;gap:3px}
   .ev{display:flex;gap:8px;padding:4px 6px;border-radius:6px;align-items:baseline}
   .ev .ts{color:var(--muted);flex:none}
   .ev .who{font-weight:600;flex:none;min-width:48px}
+  .ev .msg{min-width:0;word-break:break-word}
   .ev.guess-correct{background:var(--gain-bg)} .ev.guess-correct .msg{color:var(--gain)}
   .ev.guess-wrong{background:var(--loss-bg)} .ev.guess-wrong .msg{color:var(--loss)}
   .ev.submit .msg{color:var(--gain)} .ev.submit-fail .msg{color:var(--loss)}
   .ev.lock{background:var(--lock-bg)} .ev.lock .msg{color:var(--lock)}
   .ev.phase{border-top:1px solid var(--line);border-bottom:1px solid var(--line);color:var(--accent);font-weight:600}
+  .ev.round{background:var(--accent);color:#fff;font-weight:600;border-radius:8px}
+  .ev.round .ts,.ev.round .msg{color:#fff}
+  .ev.spy{background:var(--spy-bg)} .ev.spy .msg{color:var(--spy)}
   .ev.access .msg,.ev.register .msg,.ev.bot .msg{color:var(--muted)}
   .nokey{padding:30px;text-align:center;color:var(--loss);font-family:var(--mono)}
 </style>
@@ -75,25 +101,27 @@
   <header>
     <h1>Oracle Arena <span class="sub">// control room</span></h1>
     <div class="status">
+      <span class="round" id="round" hidden>—</span>
       <span id="clock">—</span>
       <span class="badge pending" id="phase">pending</span>
       <span class="dot" id="conn"></span>
     </div>
   </header>
+  <p class="tagline" id="tagline"></p>
   <div id="main" class="grid" hidden>
     <div style="display:flex;flex-direction:column;gap:16px;min-width:0">
       <div class="panel">
         <h2>Live leaderboard</h2>
-        <table><thead><tr><th>#</th><th>bot</th><th>score</th><th>status</th><th>hits taken</th></tr></thead>
+        <table><thead><tr><th>#</th><th>bot</th><th>model</th><th>score</th><th>status</th><th>hits</th></tr></thead>
           <tbody id="board"></tbody></table>
       </div>
       <div class="panel">
-        <h2>Bots &amp; assignments (operator view)</h2>
-        <div class="bots" id="bots"></div>
+        <h2>War room — click a bot to read its mind</h2>
+        <div class="logs" id="bots"></div>
       </div>
     </div>
     <div class="panel">
-      <h2>Activity feed</h2>
+      <h2>Play-by-play</h2>
       <div class="feed" id="feed"></div>
     </div>
   </div>
@@ -104,15 +132,32 @@
   const $ = (id) => document.getElementById(id);
   const fmtTime = (t) => new Date(t).toLocaleTimeString([], {hour12:false});
   let fnNames = {};
+  const expanded = new Set();   // which bot logs are open (persist across polls)
 
   if (!KEY) { $("nokey").hidden = false; }
   else { $("main").hidden = false; boot(); }
 
   function boot(){
+    // delegated click: toggle a bot's thought log open/closed
+    $("bots").addEventListener("click", (e) => {
+      const head = e.target.closest(".bot-head"); if (!head) return;
+      const id = head.dataset.bot;
+      if (expanded.has(id)) expanded.delete(id); else expanded.add(id);
+      pollSnapshot();
+    });
     pollSnapshot();
     setInterval(pollSnapshot, 1000);
     connectStream();
   }
+
+  const TAGLINES = {
+    pending: "…the competitors are taking their seats.",
+    build:   "<b>⚒ The forge is hot.</b> Each mind builds a password-locked oracle — and schemes to make it unbreakable.",
+    verify:  "<b>🔍 The judges weigh every submission.</b> Only honest, locked binaries pass.",
+    attack:  "<b>⚔ The hunt is on.</b> Binaries are being torn open, probed, and disassembled.",
+    break:   "<b>🕵 Espionage break.</b> Rivals are reading each other's playbooks — learning, adapting, plotting.",
+    ended:   "<b>🏁 The dust settles.</b> The tournament is decided.",
+  };
 
   async function pollSnapshot(){
     try {
@@ -129,15 +174,20 @@
     const ph = c.phase;
     $("phase").textContent = ph;
     $("phase").className = "badge " + ph;
+    $("tagline").innerHTML = TAGLINES[ph] || "";
+    const r = $("round");
+    if (c.rounds_total > 1 && c.round >= 1) { r.hidden = false; r.textContent = `ROUND ${c.round} / ${c.rounds_total}`; }
+    else r.hidden = true;
     let left = "";
-    if (ph === "build" && c.build_ends_at) left = secs(c.build_ends_at - c.now) + " to submit";
-    else if (ph === "verify") left = "verifying submissions…";
-    else if (ph === "attack" && c.attack_ends_at) left = secs(c.attack_ends_at - c.now) + " left";
-    else if (ph === "ended") left = "round over";
+    if (ph === "build") left = secs(c.seconds_remaining) + " to build";
+    else if (ph === "verify") left = "verifying…";
+    else if (ph === "attack") left = secs(c.seconds_remaining) + " left";
+    else if (ph === "break") left = secs(c.seconds_remaining) + " of recon";
+    else if (ph === "ended") left = "tournament over";
     else left = "awaiting start";
     $("clock").textContent = left + (lockAt ? `  ·  lock@${lockAt}` : "");
   }
-  const secs = (ms) => Math.max(0, Math.round(ms/1000)) + "s";
+  const secs = (v) => Math.max(0, Math.round(v ?? 0)) + "s";
 
   function botStatus(a, phase, lockAt){
     if (a.locked) return { cls:"locked", label:`locked ${a.attempts}/${lockAt}` };
@@ -147,24 +197,54 @@
     if (a.submitted) return { cls:"pending", label:"submitted" };
     return { cls:"building", label:"building…" };
   }
+  function deltaChip(d){
+    if (!d) return `<span class="delta zero">±0</span>`;
+    return `<span class="delta ${d>0?"up":"down"}">${d>0?"+":""}${d}</span>`;
+  }
 
   function renderBoard(agents, phase, lockAt){
     const rows = [...agents].sort((a,b)=>b.score-a.score);
     $("board").innerHTML = rows.map((a,i)=>{
       const s = botStatus(a, phase, lockAt);
       return `<tr><td class="rank">${i+1}</td><td>${a.id}</td>
-        <td class="score">${a.score}</td><td><span class="pill ${s.cls}">${s.label}</span></td><td>${a.attempts}</td></tr>`;
+        <td class="model">${escapeHtml(a.brain||"?")}</td>
+        <td class="score">${a.score}${deltaChip(a.round_delta)}</td>
+        <td><span class="pill ${s.cls}">${s.label}</span></td><td>${a.attempts}</td></tr>`;
     }).join("");
   }
 
   function renderBots(agents, phase, lockAt){
     $("bots").innerHTML = agents.map(a=>{
       const s = botStatus(a, phase, lockAt);
-      return `<div class="bot"><div class="id">${a.id}</div>
-        <div class="fn">${a.function_name} <span style="color:var(--muted)">(fn ${a.function_id})</span></div>
-        <div class="meta"><span class="pts">${a.score}</span><span class="pill ${s.cls}">${s.label}</span></div>
-        <div class="thought">${a.last_thought ? escapeHtml(a.last_thought) : ""}</div></div>`;
+      const open = expanded.has(a.id) ? " open" : "";
+      const thoughts = a.thoughts || [];
+      let body;
+      if (!thoughts.length) body = `<span class="empty">no thoughts yet…</span>`;
+      else {
+        let last = null; const parts = [];
+        for (const e of thoughts){
+          if (e.round && e.round !== last){ parts.push(`<div class="rd">round ${e.round}</div>`); last = e.round; }
+          parts.push(`<div class="t">${escapeHtml(e.msg)}</div>`);
+        }
+        body = parts.join("");
+      }
+      return `<div class="bot${open}">
+        <div class="bot-head" data-bot="${a.id}">
+          <span class="tw">▸</span>
+          <span class="id">${a.id}</span>
+          <span class="model">${escapeHtml(a.brain||"?")}</span>
+          <span class="fn">${a.function_name} (fn ${a.function_id})</span>
+          <span class="pts">${a.score}</span>
+          <span class="pill ${s.cls}">${s.label}</span>
+        </div>
+        <div class="bot-log">${body}</div>
+      </div>`;
     }).join("");
+    // keep expanded logs scrolled to the newest thought
+    for (const id of expanded){
+      const el = document.querySelector(`.bot-head[data-bot="${id}"]`)?.nextElementSibling;
+      if (el) el.scrollTop = el.scrollHeight;
+    }
   }
 
   function connectStream(){
@@ -179,20 +259,21 @@
     const atBottom = feed.scrollTop + feed.clientHeight >= feed.scrollHeight - 30;
     const div = document.createElement("div");
     let cls = e.type, msg = "", who = e.actor || "";
-    if (e.type === "access") msg = e.note || `read ${e.path.replace("/v1/","")}`;
-    else if (e.type === "register") msg = `joined — assigned ${e.function_name} (fn ${e.function_id})`;
-    else if (e.type === "submit") { cls = e.ok ? "submit" : "submit-fail"; msg = e.ok ? `submitted binary (${e.bytes}B) — ${e.note || "accepted"}` : `submission rejected: ${e.reason}`; }
-    else if (e.type === "verify_start") { who = ""; cls = "phase"; msg = `verifying ${e.count} submissions…`; }
-    else if (e.type === "verify") { cls = e.ok ? "submit" : "submit-fail"; msg = e.ok ? "verified ✓ (honest + locks)" : `rejected: ${e.reason}`; }
-    else if (e.type === "verify_done") { who = ""; cls = "phase"; msg = `verification complete — ${e.valid} valid. the hunt begins.`; }
-    else if (e.type === "guess") { cls = e.correct ? "guess-correct" : "guess-wrong"; msg = `guessed ${e.target} = ${e.function_name} → ${e.correct ? "CORRECT +2" : "WRONG −2"} (now ${e.guesser_score})`; }
-    else if (e.type === "lock") { who = ""; msg = `🔒 ${e.target} locked after ${e.attempts} attempts`; }
-    else if (e.type === "phase") { who = ""; msg = `── phase: ${e.phase.toUpperCase()} ──`; }
+    if (e.type === "access") { if (/study/.test(e.note||"")) cls = "spy"; msg = e.note || `read ${e.path.replace("/v1/","")}`; }
+    else if (e.type === "register") msg = `assigned ${e.function_name} (fn ${e.function_id})` + (e.brain ? ` — ${e.brain}` : "");
+    else if (e.type === "submit") { cls = e.ok ? "submit" : "submit-fail"; msg = e.ok ? `submitted a binary (${e.bytes}B) — ${e.note || "accepted"}` : `submission rejected: ${e.reason}`; }
+    else if (e.type === "verify_start") { who = ""; cls = "phase"; msg = `the judges begin — ${e.count} submissions under the glass…`; }
+    else if (e.type === "verify") { cls = e.ok ? "submit" : "submit-fail"; msg = e.ok ? "verified ✓ honest and locked" : `rejected: ${e.reason}`; }
+    else if (e.type === "verify_done") { who = ""; cls = "phase"; msg = `${e.valid} binaries stand. Let the hunt begin.`; }
+    else if (e.type === "guess") { cls = e.correct ? "guess-correct" : "guess-wrong"; msg = `cracked ${e.target} = ${e.function_name} → ${e.correct ? "CORRECT +2" : "WRONG −2"} (now ${e.guesser_score})`; }
+    else if (e.type === "lock") { who = ""; cls = "lock"; msg = `🔒 ${e.target} sealed after ${e.attempts} attempts`; }
+    else if (e.type === "round") { who = ""; cls = "round"; msg = `═══ ROUND ${e.round} of ${e.rounds_total} ═══`; }
+    else if (e.type === "phase") { who = ""; msg = `── ${e.phase.toUpperCase()}${e.round?` · round ${e.round}`:""} ──`; }
     else if (e.type === "bot") msg = e.msg;
     div.className = "ev " + cls;
-    div.innerHTML = `<span class="ts">${fmtTime(e.t)}</span><span class="who">${who}</span><span class="msg">${escapeHtml(msg)}</span>`;
+    div.innerHTML = `<span class="ts">${fmtTime(e.t)}</span><span class="who">${escapeHtml(who)}</span><span class="msg">${escapeHtml(msg)}</span>`;
     feed.appendChild(div);
-    while (feed.childElementCount > 400) feed.removeChild(feed.firstChild);
+    while (feed.childElementCount > 500) feed.removeChild(feed.firstChild);
     if (atBottom) feed.scrollTop = feed.scrollHeight;
   }
   function escapeHtml(s){ return String(s).replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
