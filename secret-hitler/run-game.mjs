@@ -18,6 +18,8 @@ const RUN_DIR = join(ROOT, ".sh-run");
 const BRAINS = (process.env.BRAINS || "haiku,haiku,sonnet,sonnet,opus,claude-fable-5-1,claude-opus-5-5,claude-opus-4-8")
   .split(",").map((s) => s.trim()).filter(Boolean);
 if (BRAINS.length !== 8) { console.error(`need exactly 8 brains, got ${BRAINS.length}`); process.exit(1); }
+// themed animal codenames — the players' public identities (bots address each other by these)
+const ALIASES = ["Falcon", "Nightingale", "Fox", "Owl", "Wolf", "Serpent", "Bear", "Stag"];
 
 rmSync(RUN_DIR, { recursive: true, force: true }); mkdirSync(RUN_DIR, { recursive: true });
 const children = [];
@@ -25,7 +27,7 @@ const stop = () => { for (const c of children) { try { c.kill("SIGTERM"); } catc
 process.on("SIGINT", () => { stop(); process.exit(1); });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const adminPost = (p) => fetch(URL_ + p, { method: "POST", headers: { "content-type": "application/json", "x-admin-key": ADMIN }, body: "{}" }).then((r) => r.json());
-const agentsPost = (brains) => fetch(URL_ + "/admin/agents", { method: "POST", headers: { "content-type": "application/json", "x-admin-key": ADMIN }, body: JSON.stringify({ brains }) }).then((r) => r.json());
+const agentsPost = (brains, names) => fetch(URL_ + "/admin/agents", { method: "POST", headers: { "content-type": "application/json", "x-admin-key": ADMIN }, body: JSON.stringify({ brains, names }) }).then((r) => r.json());
 const snap = () => fetch(`${URL_}/spectator/snapshot?key=${ADMIN}`).then((r) => r.json());
 
 // 1. server
@@ -37,7 +39,7 @@ children.push(server);
 for (let i = 0; i < 40; i++) { try { await fetch(URL_ + "/v1/challenge"); break; } catch { await sleep(150); } }
 
 // 2. register the field
-const reg = await agentsPost(BRAINS);
+const reg = await agentsPost(BRAINS, ALIASES);
 console.log(`\n[sh] registered ${reg.length} players; dashboard → ${URL_}/?key=${ADMIN}\n`);
 
 // 3. spawn one claude player per brain

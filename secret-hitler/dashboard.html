@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Secret Senate</title>
+<meta name="description" content="Live spectator god-view for an 8-model game of Secret Hitler: roles, policy tracks, the public debate forum, and vote reveals.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Special+Elite&family=Oswald:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#14100c; --panel:#1f1813; --panel-2:#2a211a; --ink:#f3e9d6; --muted:#b7a88f;
+    --lib:#3b82f6; --lib-dim:#1e3a5f; --fas:#dc2626; --fas-dim:#5c1d1d; --gold:#d9a441;
+    --line:#3a2f24; --ja:#4ade80; --nein:#f87171; --dead:#5a4f44;
+  }
+  :root:not([data-theme="light"]) [data-theme]{}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:'Oswald',system-ui,sans-serif;
+    background-image:radial-gradient(900px 500px at 50% -10%,#2a1f16 0%,transparent 60%);min-height:100vh}
+  [hidden]{display:none!important}
+  h1,h2,h3{font-family:'Special Elite',serif;margin:0;letter-spacing:.5px}
+  header{display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:14px 18px;border-bottom:2px solid var(--line);background:#120d09cc}
+  header h1{font-size:26px;color:var(--gold);text-shadow:0 2px 0 #000}
+  .clock{font-size:14px;color:var(--muted)}
+  .clock b{color:var(--ink)}
+  .wrap{display:grid;grid-template-columns:300px 1fr 360px;gap:14px;padding:14px;max-width:1500px;margin:0 auto}
+  @media (max-width:1100px){.wrap{grid-template-columns:1fr}}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+  .panel h2{font-size:15px;color:var(--gold);margin-bottom:10px;text-transform:uppercase;letter-spacing:1px}
+
+  /* policy tracks */
+  .track{margin-bottom:14px}
+  .track .lbl{font-size:12px;color:var(--muted);display:flex;justify-content:space-between;margin-bottom:5px}
+  .slots{display:flex;gap:5px}
+  .slot{flex:1;height:34px;border-radius:5px;border:1px solid var(--line);background:#00000030;display:flex;align-items:center;justify-content:center;font-size:11px;color:#0006}
+  .track.lib .slot.on{background:linear-gradient(180deg,var(--lib),var(--lib-dim));box-shadow:0 0 10px #3b82f688;border-color:#60a5fa}
+  .track.fas .slot.on{background:linear-gradient(180deg,var(--fas),var(--fas-dim));box-shadow:0 0 10px #dc262688;border-color:#f87171}
+  .slot.power{color:var(--gold);font-weight:700}
+  .tracker{display:flex;gap:8px;align-items:center;margin-top:4px}
+  .dot{width:16px;height:16px;border-radius:50%;border:2px solid var(--line);background:#0004}
+  .dot.on{background:var(--gold);border-color:#f0c56a;box-shadow:0 0 8px var(--gold)}
+  .nextpow{font-size:12px;color:var(--muted);margin-top:8px}
+
+  /* seats */
+  .seats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+  @media (max-width:760px){.seats{grid-template-columns:repeat(2,1fr)}}
+  .seat{position:relative;background:var(--panel-2);border:1px solid var(--line);border-radius:12px;padding:12px;transition:.2s;overflow:hidden}
+  .seat.pres{border-color:var(--gold);box-shadow:0 0 0 2px var(--gold) inset,0 0 18px #d9a44144}
+  .seat.chan{border-color:#eab308;box-shadow:0 0 0 2px #eab30877 inset}
+  .seat.dead{opacity:.45;filter:grayscale(.7)}
+  .seat.dead::after{content:"☠ EXECUTED";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:'Special Elite';color:#f87171;background:#0007;font-size:14px}
+  .seat .who{display:flex;justify-content:space-between;align-items:center;gap:6px}
+  .seat .id{font-size:18px;font-weight:700}
+  .seat .model{font-size:10.5px;color:var(--muted);font-family:monospace}
+  .role{display:inline-block;margin-top:8px;padding:3px 9px;border-radius:20px;font-size:12px;font-weight:700;letter-spacing:.5px}
+  .role.liberal{background:var(--lib-dim);color:#bfdbfe;border:1px solid var(--lib)}
+  .role.fascist{background:var(--fas-dim);color:#fecaca;border:1px solid var(--fas)}
+  .role.hitler{background:#000;color:#fca5a5;border:1px solid #f87171;box-shadow:0 0 10px #dc262688}
+  .badges{position:absolute;top:8px;right:10px;font-size:16px}
+  .votechip{margin-top:9px;height:22px;border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;background:#0004;color:var(--muted);transition:.3s}
+  .votechip.ja{background:#14532d;color:var(--ja)} .votechip.nein{background:#4c1111;color:var(--nein)}
+  .seat .last{margin-top:9px;font-size:11.5px;color:#cdbfa6;font-style:italic;min-height:15px;line-height:1.3}
+  .seat{border-top:3px solid var(--accent,#3a2f24)}
+  .seat .emblem{font-size:22px;margin-right:7px;filter:drop-shadow(0 0 6px var(--accent))}
+  .seat .id{color:var(--accent,#fff)}
+
+  /* forum + ticker */
+  .feed{height:460px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;font-size:13px}
+  .post{background:var(--panel-2);border-left:3px solid var(--gold);border-radius:4px;padding:7px 9px;line-height:1.4}
+  .post .from{font-weight:700;color:var(--gold);font-size:12px}
+  .post .from small{color:var(--muted);font-weight:400;font-family:monospace;margin-left:5px}
+  .tick{height:210px;overflow-y:auto;display:flex;flex-direction:column;gap:3px;font-family:monospace;font-size:11.5px;margin-top:6px}
+  .tick .e{padding:2px 5px;border-radius:4px}
+  .e.vote{color:var(--gold)} .e.lib{color:#93c5fd} .e.fas{color:#fca5a5}
+  .e.phase{color:var(--muted)} .e.dead{color:#f87171;font-weight:700} .e.over{background:var(--gold);color:#000;font-weight:700}
+  .banner{text-align:center;padding:10px;border-radius:10px;font-family:'Special Elite';font-size:18px;margin-bottom:12px;display:none}
+  .banner.show{display:block}
+  .banner.lib{background:linear-gradient(90deg,var(--lib-dim),var(--lib));color:#fff}
+  .banner.fas{background:linear-gradient(90deg,var(--fas-dim),var(--fas));color:#fff}
+  .nokey{padding:40px;text-align:center;color:var(--muted)}
+  .topic{font-size:12px;color:var(--gold);font-style:italic;margin-bottom:8px;min-height:16px}
+</style>
+</head>
+<body>
+<header>
+  <h1>⚖ SECRET SENATE</h1>
+  <div class="clock" id="clock">waiting for the session to convene…</div>
+</header>
+
+<div id="nokey" class="nokey" hidden>Append <b>?key=sh-admin</b> to the URL to watch.</div>
+
+<div class="wrap" id="app" hidden>
+  <section class="panel" id="boardPanel">
+    <h2>The Floor</h2>
+    <div class="track lib"><div class="lbl"><span>Liberal agenda</span><span id="libn">0 / 5</span></div><div class="slots" id="libSlots"></div></div>
+    <div class="track fas"><div class="lbl"><span>Fascist agenda</span><span id="fasn">0 / 6</span></div><div class="slots" id="fasSlots"></div></div>
+    <div class="lbl" style="margin-top:12px"><span>Election tracker</span></div>
+    <div class="tracker" id="tracker"></div>
+    <div class="nextpow" id="nextpow"></div>
+    <div class="nextpow" id="deckinfo"></div>
+    <h2 style="margin-top:16px">Dossier</h2>
+    <div class="tick" id="tick"></div>
+  </section>
+
+  <section>
+    <div class="banner" id="banner"></div>
+    <div class="topic" id="topic"></div>
+    <div class="seats" id="seats"></div>
+  </section>
+
+  <section class="panel">
+    <h2>Public Debate</h2>
+    <div class="feed" id="feed"></div>
+  </section>
+</div>
+
+<script>
+  const KEY = new URLSearchParams(location.search).get("key");
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s==null?"":s).replace(/[&<>"]/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
+  const POWERS = { investigate:"🔍 Investigate loyalty", special_election:"🗳 Special election", execution:"🔫 Execution" };
+  const THEME = { Falcon:{e:"🦅",c:"#d9a441"}, Nightingale:{e:"🕊",c:"#c4b5fd"}, Fox:{e:"🦊",c:"#fb923c"}, Owl:{e:"🦉",c:"#38bdf8"},
+    Wolf:{e:"🐺",c:"#cbd5e1"}, Serpent:{e:"🐍",c:"#34d399"}, Bear:{e:"🐻",c:"#f59e0b"}, Stag:{e:"🦌",c:"#2dd4bf"} };
+  const themeOf = (id) => THEME[id] || { e:"🎭", c:"#b7a88f" };
+  let roles = {}, models = {}, lastVotes = {};
+
+  if (!KEY) { $("nokey").hidden = false; }
+  else { $("app").hidden = false; boot(); }
+
+  function boot(){ pollSnapshot(); connectStream(); setInterval(pollSnapshot, 4000); }
+
+  async function pollSnapshot(){
+    try{
+      const r = await fetch(`/spectator/snapshot?key=${encodeURIComponent(KEY)}`, {cache:"no-store"});
+      if (!r.ok) return; const s = await r.json();
+      if (s.roles){ for (const p of s.roles){ roles[p.id]=p.role; models[p.id]=p.brain; } }
+      if (s.state) render(s.state, s.step, s.roles);
+      if (s.forum){ $("feed").innerHTML=""; for (const p of s.forum) addPost(p.from, p.msg); }
+    }catch{}
+  }
+
+  function trackSlots(el, n, max, kind){
+    el.innerHTML="";
+    const powerAt = kind==="fas" ? {2:"🔍",3:"🗳",4:"🔫",5:"🔫"} : {};
+    for (let i=1;i<=max;i++){
+      const d=document.createElement("div"); d.className="slot"+(i<=n?" on":"")+(powerAt[i]?" power":"");
+      d.textContent = i<=n ? (kind==="lib"?"★":"✖") : (powerAt[i]||"");
+      el.appendChild(d);
+    }
+  }
+
+  function render(st, step, roleList){
+    $("clock").innerHTML = `Round <b>${st.round||0}</b> · <b>${esc(step?.kind==="discussion"?"DEBATE":(step?.action||st.phase||"").toUpperCase())}</b>` +
+      (step?.seconds_left!=null?` · ${step.seconds_left}s`:"") + ` · deck ${st.deckCount} / discard ${st.discardCount}`;
+    trackSlots($("libSlots"), st.liberalPolicies||0, 5, "lib"); $("libn").textContent=`${st.liberalPolicies||0} / 5`;
+    trackSlots($("fasSlots"), st.fascistPolicies||0, 6, "fas"); $("fasn").textContent=`${st.fascistPolicies||0} / 6`;
+    const tr=$("tracker"); tr.innerHTML=""; for(let i=1;i<=3;i++){const d=document.createElement("div");d.className="dot"+(i<=(st.electionTracker||0)?" on":"");tr.appendChild(d);}
+    $("nextpow").innerHTML = st.nextPower ? `Next fascist policy grants: <b style="color:var(--gold)">${POWERS[st.nextPower]||st.nextPower}</b>` : "";
+    $("deckinfo").textContent = st.vetoUnlocked ? "⚠ Veto power unlocked" : "";
+    renderSeats(st, step, roleList);
+    if (st.winner){ const b=$("banner"); b.className="banner show "+(st.winner==="liberal"?"lib":"fas"); b.textContent=`${st.winner.toUpperCase()} VICTORY — ${st.winReason}`; }
+  }
+
+  function renderSeats(st, step, roleList){
+    const seats=$("seats"); const list = roleList || (st.players||[]).map(p=>({id:p.id,alive:p.alive,role:roles[p.id],brain:models[p.id]}));
+    seats.innerHTML="";
+    for (const p of list){
+      const role = p.role || roles[p.id] || "?"; const model = p.brain || models[p.id] || "";
+      const th = themeOf(p.id);
+      const isPres = st.president===p.id, isChan = st.chancellor===p.id;
+      const seat=document.createElement("div");
+      seat.className="seat"+(isPres?" pres":"")+(isChan?" chan":"")+(p.alive===false?" dead":"");
+      seat.style.setProperty("--accent", th.c);
+      const badge = (isPres?"👑":"")+(isChan?"🎖":"");
+      const v = lastVotes[p.id]; const vote = v===undefined?"":(v?"ja":"nein");
+      seat.innerHTML =
+        `<div class="badges">${badge}</div>
+         <div class="who"><span class="id"><span class="emblem">${th.e}</span>${esc(p.id)}</span></div>
+         <div class="model">${esc(model)}</div>
+         <span class="role ${esc(role)}">${esc(role).toUpperCase()}</span>
+         <div class="votechip ${vote}">${v===undefined?"—":(v?"JA ✔":"NEIN ✘")}</div>`;
+      seats.appendChild(seat);
+    }
+  }
+
+  function addPost(from, msg){
+    const f=$("feed"); const near = f.scrollTop+f.clientHeight >= f.scrollHeight-40;
+    const d=document.createElement("div"); d.className="post";
+    d.innerHTML=`<div class="from">${esc(from)} <small>${esc(models[from]||"")}</small></div>${esc(msg)}`;
+    f.appendChild(d); while(f.childElementCount>200) f.removeChild(f.firstChild);
+    if (near) f.scrollTop=f.scrollHeight;
+  }
+  function tick(cls, html){
+    const t=$("tick"); const near=t.scrollTop+t.clientHeight>=t.scrollHeight-20;
+    const d=document.createElement("div"); d.className="e "+cls; d.innerHTML=html;
+    t.appendChild(d); while(t.childElementCount>150) t.removeChild(t.firstChild);
+    if(near) t.scrollTop=t.scrollHeight;
+  }
+
+  function connectStream(){
+    const es=new EventSource(`/spectator/stream?key=${encodeURIComponent(KEY)}`);
+    es.onmessage=(m)=>{ try{ handle(JSON.parse(m.data)); }catch{} };
+  }
+  function handle(e){
+    switch(e.type){
+      case "say": addPost(e.actor, e.msg); break;
+      case "state": render(e, null, null); break;
+      case "discussion_open": lastVotes={}; renderSeatsReset(); $("topic").textContent="💬 "+(e.topic||"debate"); tick("phase",`— debate opens (r${e.round}) —`); break;
+      case "discussion_close": $("topic").textContent=""; break;
+      case "await_action": tick("phase",`▶ ${esc(e.actor||"")}: ${esc(e.action)}`); break;
+      case "vote_cast": break;
+      case "votes": {
+        lastVotes = e.votes||{};
+        const yes=Object.values(lastVotes).filter(Boolean).length, tot=Object.keys(lastVotes).length;
+        tick("vote",`🗳 government ${esc(e.president)}/${esc(e.chancellor)} — ${yes}/${tot} Ja → <b>${yes>tot/2?"ELECTED":"REJECTED"}</b>`);
+        pollSnapshot(); break;
+      }
+      case "start": tick("phase","⚖ the session convenes"); break;
+      case "game_over": { const b=$("banner"); tick("over",`GAME OVER — ${esc(e.winner).toUpperCase()} WIN`); pollSnapshot(); break; }
+    }
+  }
+  function renderSeatsReset(){ document.querySelectorAll(".votechip").forEach(c=>{c.className="votechip";c.textContent="—";}); }
+</script>
+</body>
+</html>

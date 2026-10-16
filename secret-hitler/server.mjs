@@ -28,6 +28,7 @@ const byToken = new Map();
 let forum = [];                  // public posts
 let privateInbox = new Map();    // id -> [ private notes: role reveal, investigation results ]
 let cur = null;                  // current orchestration step (see advance())
+let curVotes = {};               // votes for the government currently on the floor (public on reveal)
 let talkedKeys = new Set();      // engine step keys that already had their discussion
 const events = [];
 let seq = 0;
@@ -78,9 +79,18 @@ function startDiscussion(topic, key) {
   emit("discussion_open", { topic, round: game.round, deadline: cur.deadline, president: game.president, chancellor: game.chancellor });
 }
 function startAction(pend, key) {
+  if (pend.type === "vote") curVotes = {};
   cur = { kind: "action", key, pend, deadline: now() + ACTION_MS };
   emit("await_action", { action: pend.type, actor: pend.actor, actors: pend.actors, round: game.round,
     president: game.president, chancellor: game.chancellor, options: pend.options });
+}
+
+// cast a vote and, when it resolves the election, reveal the full tally publicly
+function castVote(id, ja) {
+  const pres = game.president, chan = game.chancellor, before = game.phase;
+  game.vote(id, ja); curVotes[id] = !!ja;
+  emit("vote_cast", { actor: id });
+  if (before === "election" && game.phase !== "election") emit("votes", { votes: { ...curVotes }, president: pres, chancellor: chan });
 }
 
 // default legal moves, applied to whoever misses the deadline
@@ -88,7 +98,7 @@ function applyDefaults() {
   const p = cur.pend;
   try {
     if (p.type === "nominate") game.nominate(p.actor, p.options[Math.floor(Math.random() * p.options.length)]);
-    else if (p.type === "vote") { for (const id of p.actors) if (!(id in game.votes)) game.vote(id, false); } // silence = Nein
+    else if (p.type === "vote") { for (const id of p.actors) if (!(id in game.votes)) castVote(id, false); } // silence = Nein
     else if (p.type === "president_discard") game.presidentDiscard(p.actor, 0);
     else if (p.type === "chancellor_enact") game.chancellorEnact(p.actor, 0);
     else if (p.type === "veto_response") game.vetoResponse(p.actor, false);
@@ -158,9 +168,9 @@ const server = createServer(async (req, res) => {
   // admin: register field + start
   if (path === "/admin/agents" && m === "POST") {
     if ((req.headers["x-admin-key"] || "") !== ADMIN_KEY) return send(res, 403, { error: "admin" });
-    const b = (await readBody(req)) || {}; const brains = b.brains || [];
+    const b = (await readBody(req)) || {}; const brains = b.brains || []; const names = b.names || [];
     const out = [];
-    for (let i = 0; i < brains.length; i++) { const id = `p${i + 1}`; const token = randomBytes(12).toString("hex"); const a = { id, token, brain: String(brains[i]) }; byId.set(id, a); byToken.set(token, a); out.push({ id, token }); }
+    for (let i = 0; i < brains.length; i++) { const id = names[i] ? String(names[i]) : `p${i + 1}`; const token = randomBytes(12).toString("hex"); const a = { id, token, brain: String(brains[i]) }; byId.set(id, a); byToken.set(token, a); out.push({ id, token }); }
     return send(res, 200, out);
   }
   if (path === "/admin/start" && m === "POST") {
@@ -219,7 +229,7 @@ const server = createServer(async (req, res) => {
   if (path === "/v1/nominate" && m === "POST") { const b = await readBody(req); return act(() => game.nominate(me.id, b.chancellor)); }
   if (path === "/v1/vote" && m === "POST") {
     const b = await readBody(req);
-    try { game.vote(me.id, !!b.ja); emit("vote_cast", { actor: me.id }); if (game.phase !== "election") afterEngineMutation(); return send(res, 200, { ok: true }); }
+    try { castVote(me.id, !!b.ja); if (game.phase !== "election") afterEngineMutation(); return send(res, 200, { ok: true }); }
     catch (e) { return send(res, 409, { error: String(e.message) }); }
   }
   if (path === "/v1/legislate" && m === "POST") {
