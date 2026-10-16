@@ -12,6 +12,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomBytes } from "node:crypto";
+import { spawn, spawnSync } from "node:child_process";
 import { SecretHitler, LIBERAL, FASCIST, HITLER } from "./engine.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -41,10 +42,53 @@ function emit(type, detail = {}) {
   for (const res of sseClients) { try { res.write(line); } catch {} }
 }
 function note(id, msg, extra = {}) { const arr = privateInbox.get(id) || []; arr.push({ t: now(), msg, ...extra }); privateInbox.set(id, arr); }
+
+// ---- text-to-speech (host-side macOS `say`) ----
+// Every forum post and every narrator announcement is spoken aloud, one at a
+// time, through a single queue. The post's text is REVEALED to the dashboard
+// only as it begins to be spoken, so the written messages flow at talking pace.
+const TTS = process.env.TTS !== "0";
+const SAY_RATE = Number(process.env.SAY_RATE || 166);
+let VOICES = {};            // alias -> macOS voice name
+let NARR_VOICE = null;      // the narrator's voice
+const speechQ = [];         // { voice, text, onStart }
+let speaking = false;
+function assignVoices(ids) {
+  let avail = [];
+  try {
+    const r = spawnSync("say", ["-v", "?"], { encoding: "utf8" });
+    if (r.status === 0) avail = r.stdout.split("\n").map((l) => { const mm = l.match(/^(.+?)\s+(en_[A-Z]{2})\s/); return mm ? mm[1].trim() : null; }).filter(Boolean);
+  } catch {}
+  const preferred = ["Alex", "Daniel", "Samantha", "Karen", "Moira", "Tessa", "Fred", "Veena", "Rishi", "Serena", "Allison", "Tom", "Victoria", "Oliver", "Kate"];
+  const ordered = [...preferred.filter((n) => avail.includes(n)), ...avail.filter((n) => !preferred.includes(n))];
+  VOICES = {}; ids.forEach((id, i) => { VOICES[id] = ordered.length ? ordered[i % ordered.length] : null; });
+  NARR_VOICE = ordered.length ? ordered[(ids.length) % ordered.length] : null;
+  emit("voices", { voices: VOICES, narrator: NARR_VOICE, tts: TTS });
+}
+function drainSpeech() {
+  if (speaking) return;
+  const item = speechQ.shift();
+  if (!item) return;
+  speaking = true;
+  try { item.onStart && item.onStart(); } catch {}
+  const finish = () => { speaking = false; setTimeout(drainSpeech, 260); }; // a beat between speakers
+  if (!TTS) { speaking = false; return drainSpeech(); }
+  try {
+    const args = ["-r", String(SAY_RATE)]; if (item.voice) args.push("-v", item.voice);
+    args.push(item.text.slice(0, 600));
+    const ch = spawn("say", args, { stdio: "ignore" });
+    ch.on("exit", finish); ch.on("error", finish);
+  } catch { finish(); }
+}
+function enqueueSpeech(item) { speechQ.push(item); drainSpeech(); }
+const speechIdle = () => speechQ.length === 0 && !speaking;
+function narrate(text) { emit("narrate", { text }); enqueueSpeech({ voice: NARR_VOICE, text }); }
+
 function post(from, msg) {
   const p = { seq: forum.length + 1, from, msg: String(msg).replace(/\s+/g, " ").trim().slice(0, 700), t: now(), round: game?.round, phase: cur?.kind };
   forum.push(p); if (forum.length > 2000) forum.shift();
-  emit("say", { actor: from, msg: p.msg });
+  // reveal + speak this post when the queue reaches it, so text flows at talking pace
+  enqueueSpeech({ voice: VOICES[from] || null, text: p.msg, onStart: () => emit("say", { actor: from, msg: p.msg, speaking: true }) });
   return p;
 }
 
@@ -66,10 +110,15 @@ function advance() {
   const wantsTalk = (pend.type in DISCUSS_BEFORE);
   if (wantsTalk && !talkedKeys.has(key)) {
     talkedKeys.add(key);
-    let topic = DISCUSS_BEFORE[pend.type];
-    if (pend.type === "vote") topic = `Proposed government — President ${game.president}, Chancellor ${game.chancellor}. Debate, then vote Ja/Nein.`;
-    return startDiscussion(topic, key);
+    let topic, narr;
+    if (pend.type === "vote") { topic = `Proposed government — President ${game.president}, Chancellor ${game.chancellor}. Debate, then vote Ja/Nein.`; narr = `${game.president} nominates ${game.chancellor} for chancellor. Debate, then the vote.`; }
+    else if (pend.type === "investigate") { topic = DISCUSS_BEFORE.investigate; narr = `A fascist policy passed. ${game.president} will investigate a player's loyalty.`; }
+    else if (pend.type === "execution") { topic = DISCUSS_BEFORE.execution; narr = `${game.president} must execute a player. The table pleads its case.`; }
+    else { topic = DISCUSS_BEFORE[pend.type]; narr = `Round ${game.round}. ${game.president} takes the chair and will nominate a chancellor.`; }
+    startDiscussion(topic, key); narrate(narr);
+    return;
   }
+  if (pend.type === "special_election") narrate(`${game.president} may call a special election to hand the presidency to anyone.`);
   startAction(pend, key);
 }
 
@@ -90,7 +139,11 @@ function castVote(id, ja) {
   const pres = game.president, chan = game.chancellor, before = game.phase;
   game.vote(id, ja); curVotes[id] = !!ja;
   emit("vote_cast", { actor: id });
-  if (before === "election" && game.phase !== "election") emit("votes", { votes: { ...curVotes }, president: pres, chancellor: chan });
+  if (before === "election" && game.phase !== "election") {
+    emit("votes", { votes: { ...curVotes }, president: pres, chancellor: chan });
+    const yes = Object.values(curVotes).filter(Boolean).length, tot = Object.keys(curVotes).length;
+    narrate(`The vote: ${yes} in favor, ${tot - yes} against. The government is ${yes > tot / 2 ? "elected" : "rejected"}.`);
+  }
 }
 
 // default legal moves, applied to whoever misses the deadline
@@ -111,8 +164,10 @@ function applyDefaults() {
 function tick() {
   if (!game || !cur || game.phase === "game_over") return;
   if (cur.kind === "discussion") {
+    // never cut speech off mid-sentence: the window only closes once the voice
+    // queue is idle, so written messages flow at the rate they are spoken.
     const everyoneSpoke = game.alive().every((p) => cur.posted.has(p.id));
-    const close = now() >= cur.deadline || (everyoneSpoke && now() >= cur.floorUntil);
+    const close = speechIdle() && (now() >= cur.deadline || (everyoneSpoke && now() >= cur.floorUntil));
     if (close) { emit("discussion_close", { round: game.round }); advance(); }
     return;
   }
@@ -122,9 +177,18 @@ function tick() {
 setInterval(tick, 300).unref();
 
 // called after any engine-mutating action to broadcast + move on
+let nar = { L: 0, F: 0, alive: null };
 function afterEngineMutation() {
-  emit("state", game.publicState());
-  if (game.phase === "game_over") { emit("game_over", { winner: game.winner, reason: game.winReason }); cur = null; return; }
+  const s = game.publicState();
+  emit("state", s);
+  if (nar.alive === null) nar.alive = new Set(s.players.filter((p) => p.alive).map((p) => p.id));
+  if (s.liberalPolicies > nar.L) narrate(`A liberal policy is enacted. Liberals now hold ${s.liberalPolicies} of five.`);
+  if (s.fascistPolicies > nar.F) narrate(`A fascist policy is enacted. The fascists now hold ${s.fascistPolicies} of six.`);
+  nar.L = s.liberalPolicies; nar.F = s.fascistPolicies;
+  const alive = new Set(s.players.filter((p) => p.alive).map((p) => p.id));
+  for (const id of nar.alive) if (!alive.has(id)) narrate(`${id} is executed, and falls silent.`);
+  nar.alive = alive;
+  if (game.phase === "game_over") { narrate(`Game over. The ${game.winner}s win. ${game.winReason}.`); emit("game_over", { winner: game.winner, reason: game.winReason }); cur = null; return; }
   advance();
 }
 
@@ -177,8 +241,11 @@ const server = createServer(async (req, res) => {
     if ((req.headers["x-admin-key"] || "") !== ADMIN_KEY) return send(res, 403, { error: "admin" });
     const ids = [...byId.keys()];
     game = new SecretHitler(ids, { seed: SEED }); forum = []; privateInbox = new Map(); talkedKeys = new Set(); cur = null;
+    nar = { L: 0, F: 0, alive: null };
+    assignVoices(ids);
     dealRoles();
     emit("start", { players: ids, seed: SEED }); emit("state", game.publicState());
+    narrate(`The senate convenes. Eight players take their seats: ${ids.join(", ")}. Somewhere among them hides Hitler. Let the session begin.`);
     advance();
     return send(res, 200, { ok: true, players: ids });
   }
