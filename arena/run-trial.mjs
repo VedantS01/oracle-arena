@@ -40,7 +40,9 @@ process.on("SIGINT", () => { stop(); process.exit(1); });
 // 1. start the server
 const server = spawn("node", [join(HERE, "server.mjs")], {
   env: { ...process.env, PORT: String(PORT), BUILD_MS: String(BUILD_MS), ATTACK_MS: String(ATTACK_MS),
-         ROUNDS: String(ROUNDS), BREAK_MS: String(BREAK_MS), ARENA_ADMIN_KEY: ADMIN_KEY, PRIVATE_DIR },
+         ROUNDS: String(ROUNDS), BREAK_MS: String(BREAK_MS),
+         ...(process.env.ATTACK_MIN_MS ? { ATTACK_MIN_MS: String(process.env.ATTACK_MIN_MS) } : {}),
+         ARENA_ADMIN_KEY: ADMIN_KEY, PRIVATE_DIR },
   stdio: ["ignore", "inherit", "inherit"],
 });
 children.push(server);

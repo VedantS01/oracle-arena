@@ -19,6 +19,9 @@
     --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
   }
   *{box-sizing:border-box}
+  /* the hidden attribute must always win — otherwise .nokey/.app display rules
+     keep the overlay painted on top of the arena even when it is "hidden". */
+  [hidden]{display:none!important}
   html,body{height:100%}
   body{margin:0;font-family:var(--ui);color:var(--parch);overflow:hidden;
     background:
@@ -75,9 +78,10 @@
   .tfeed .e.phase{color:var(--parch-2)} .tfeed .e.spy{color:#c9a0ff}
 
   /* ---------- arena of rooms ---------- */
-  .arena{display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(2,1fr);gap:12px;min-height:0}
-  @media (max-width:1280px){.arena{grid-template-columns:repeat(2,1fr);grid-template-rows:repeat(3,1fr)}}
-  @media (max-width:960px){.arena{grid-template-columns:1fr;grid-template-rows:none}.room{height:320px}}
+  .arena{display:grid;grid-template-columns:repeat(4,1fr);grid-template-rows:repeat(2,1fr);gap:12px;min-height:0}
+  @media (max-width:1440px){.arena{grid-template-columns:repeat(3,1fr);grid-template-rows:none;grid-auto-rows:minmax(220px,1fr)}}
+  @media (max-width:1040px){.arena{grid-template-columns:repeat(2,1fr)}}
+  @media (max-width:760px){.arena{grid-template-columns:1fr}.room{height:300px}}
 
   .room{position:relative;border-radius:16px;overflow:hidden;display:flex;flex-direction:column;min-height:0;
     border:3px solid var(--rm-edge,#8a5a12);box-shadow:0 0 0 2px #1d130a, 0 10px 22px rgba(0,0,0,.5);
@@ -111,6 +115,8 @@
   @keyframes pop{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 
   /* score flashes */
+  .room.watched{animation:watch 1.8s ease-in-out infinite}
+  @keyframes watch{0%,100%{box-shadow:0 0 0 2px #1d130a,0 10px 22px rgba(0,0,0,.5)}50%{box-shadow:0 0 0 2px #1d130a,0 0 24px 2px var(--lose)}}
   .room.flash-win{animation:fwin .9s ease-out} .room.flash-lose{animation:flose .9s ease-out}
   @keyframes fwin{0%{box-shadow:0 0 0 2px #1d130a,0 0 40px 6px var(--win)}100%{box-shadow:0 0 0 2px #1d130a,0 10px 22px rgba(0,0,0,.5)}}
   @keyframes flose{0%{box-shadow:0 0 0 2px #1d130a,0 0 40px 6px var(--lose)}100%{box-shadow:0 0 0 2px #1d130a,0 10px 22px rgba(0,0,0,.5)}}
@@ -201,11 +207,12 @@
   function themeFor(brain, i){
     const b = (brain||"").toLowerCase();
     if (b.includes("script")) return "automaton";
-    if (b.includes("qwen")) return "terminal";
-    if (b.includes("gemma")) return "sky";
     if (b.includes("haiku")) return "zen";
     if (b.includes("sonnet")) return "ink";
     if (b.includes("opus")) return "observatory";
+    if (b.includes("fable")) return "sky";
+    if (b.includes("gpt-oss") || b.includes("qwen")) return "terminal";
+    if (b.includes("gemma")) return "sky";
     return ORDER[i % ORDER.length];
   }
 
@@ -320,7 +327,9 @@
     const r = rooms.get(a.id); if (!r) return;
     const st = statusOf(a, phase, lockAt);
     r.el.querySelector("[data-score]").textContent = a.score;
-    r.el.querySelector("[data-sub]").textContent = `${a.id} · ${a.brain||"?"} · ${a.function_name} (fn ${a.function_id})`;
+    const spied = (a.spied_by && a.spied_by.length) ? `  👁 watched×${a.spied_by.length}` : "";
+    r.el.querySelector("[data-sub]").textContent = `${a.id} · ${a.brain||"?"} · ${a.function_name} (fn ${a.function_id})${spied}`;
+    r.el.classList.toggle("watched", !!spied);
     const pill = r.el.querySelector("[data-pill]");
     pill.textContent = st.label; pill.className = "stpill " + st.cls;
   }
@@ -377,6 +386,7 @@
     if (e.type === "verify"){ if (e.ok){ flash(e.actor,true); tick("reward", `<b>${esc(e.actor)}</b> verified ✓ +${e.reward??10}`);} else tick("lose", `<b>${esc(e.actor)}</b> rejected: ${esc(e.reason||"")}`); return; }
     if (e.type === "lock"){ tick("lock", `🔒 ${esc(e.target)} sealed after ${e.attempts} attempts`); return; }
     if (e.type === "verify_done"){ tick("phase", `${e.valid} binaries stand — let the hunt begin`); return; }
+    if (e.type === "spy"){ tick("spy", `👁 <b>${esc(e.actor)}</b> spied on ${e.targets ? e.targets.length : "the"} rival${(e.targets&&e.targets.length===1)?"":"s"} — they'll know`); return; }
     if (e.type === "access" && /study/.test(e.note||"")){ tick("spy", `🕵 ${esc(e.actor)} is studying the enemy`); return; }
   }
 </script>

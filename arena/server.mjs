@@ -27,6 +27,7 @@ const START_SCORE = 10;
 const SUBMIT_REWARD = Number(process.env.SUBMIT_REWARD || 10); // +points for a valid, on-time binary
 const ROUNDS = Number(process.env.ROUNDS || 1);          // tournament length
 const BREAK_MS = Number(process.env.BREAK_MS || 2 * 60_000); // study break between rounds
+const ATTACK_MIN_MS = Number(process.env.ATTACK_MIN_MS || 60_000); // attack can't close earlier than this, so slow bots still get a turn
 
 mkdirSync(join(PRIVATE_DIR, "binaries"), { recursive: true });
 
@@ -96,6 +97,7 @@ function beginRound(n, reassign) {
 function endAttack() {
   for (const a of byId.values()) {
     a.roundLogs.push({ round, thoughts: [...a.log], delta: a.score - a.roundStartScore, identified: a.roundIdentified, function_id: a.functionId });
+    a.spiedBy = new Set(); // clear so THIS break's spying is what each bot sees next round
   }
   lastCompletedRound = round;
   if (round < ROUNDS) {
@@ -133,7 +135,7 @@ function spectatorSnapshot() {
       score: a.score, round_delta: a.score - (a.roundStartScore ?? a.score),
       submitted: a.submitted, valid: a.valid, verified: a.verified, locked: a.locked,
       attempts: a.attempts, last_thought: a.lastThought || null,
-      thoughts: (a.log || []).slice(-80),
+      thoughts: (a.log || []).slice(-80), spied_by: [...a.spiedBy],
       i_guessed: [...a.iGuessed], guessed_by: [...a.guessedBy] })),
   };
 }
@@ -218,19 +220,21 @@ async function runVerification() {
   emit("phase", { phase: "attack", round, rounds_total: ROUNDS });
 }
 
-// A round can close EARLY to save time: build ends once everyone has a
-// submission on file; attack ends once every bot has either run out of reachable
-// targets or declared itself done. The break is always its full length.
-const allSubmitted = () => byId.size > 0 && [...byId.values()].every((a) => a.submitted);
+// Attack can close EARLY to save time, but only after a minimum window so a slow
+// model isn't lapped by the fast ones: it ends once every bot has run out of
+// reachable targets or declared itself done AND ATTACK_MIN_MS has elapsed. Build
+// always runs its full window so even a slow bot can still submit (and earn +10);
+// the break is always its full length.
 const remainingTargets = (a) => [...byId.values()].filter((t) => t.valid && !t.locked && t.id !== a.id && !a.iGuessed.has(t.id));
 const attackSettled = () => byId.size > 0 && [...byId.values()].every((a) => a.doneRound || remainingTargets(a).length === 0);
 
 let verifying = false;
 setInterval(() => {
-  if (phaseState === "build" && startedAt !== null && !verifying && (now() >= startedAt + BUILD_MS || allSubmitted())) {
+  if (phaseState === "build" && startedAt !== null && !verifying && now() >= startedAt + BUILD_MS) {
     phaseState = "verify"; emit("phase", { phase: "verify", round, rounds_total: ROUNDS });
     verifying = true; runVerification().finally(() => { verifying = false; });
-  } else if (phaseState === "attack" && attackStartedAt !== null && (now() >= attackStartedAt + ATTACK_MS || attackSettled())) {
+  } else if (phaseState === "attack" && attackStartedAt !== null &&
+             (now() >= attackStartedAt + ATTACK_MS || (now() >= attackStartedAt + ATTACK_MIN_MS && attackSettled()))) {
     endAttack();
   } else if (phaseState === "break" && breakStartedAt !== null && now() >= breakStartedAt + BREAK_MS) {
     beginRound(round + 1, true);
@@ -303,7 +307,7 @@ const server = createServer(async (req, res) => {
       const a = { id, token, functionId, brain: brains ? String(brains[i]) : "unknown",
                   score: START_SCORE, roundStartScore: START_SCORE, roundIdentified: 0,
                   submitted: false, valid: false, verified: false, submission: null, binaryName: null,
-                  attempts: 0, locked: false, doneRound: false, guessedBy: new Set(), iGuessed: new Set(), log: [], roundLogs: [] };
+                  attempts: 0, locked: false, doneRound: false, spiedBy: new Set(), guessedBy: new Set(), iGuessed: new Set(), log: [], roundLogs: [] };
       agents.set(token, a); byId.set(id, a);
       emit("register", { actor: id, function_id: functionId, function_name: fnName(functionId), brain: a.brain });
       out.push({ id, token, assigned_function_id: functionId });
@@ -352,7 +356,9 @@ const server = createServer(async (req, res) => {
   if (path === "/v1/me" && m === "GET") {
     emit("access", { actor: me.id, path });
     return send(res, 200, { id: me.id, score: me.score, round, rounds_total: ROUNDS, assigned_function_id: me.functionId,
-      submitted: me.submitted, valid: me.valid, locked: me.locked, attempts_against_me: me.attempts });
+      submitted: me.submitted, valid: me.valid, locked: me.locked, attempts_against_me: me.attempts,
+      spied_on_by: [...me.spiedBy],
+      warning: me.spiedBy.size ? `you were studied by ${me.spiedBy.size} rival(s) during the last break — they have read your playbook` : null });
   }
 
   if (path === "/v1/log" && m === "POST") {
@@ -380,7 +386,11 @@ const server = createServer(async (req, res) => {
   if (path === "/v1/study" && m === "GET") {
     if (phaseState !== "break" && phaseState !== "ended")
       return send(res, 403, { error: `study opens in the break between rounds (phase: ${phaseState})` });
-    emit("access", { actor: me.id, path, note: `studied round ${lastCompletedRound}` });
+    // studying a rival tips them off: every bot you read marks you as its observer,
+    // and that bot sees a "being spied on" warning in /v1/me next round.
+    const spied = [];
+    for (const a of byId.values()) { if (a.id !== me.id) { a.spiedBy.add(me.id); spied.push(a.id); } }
+    emit("spy", { actor: me.id, targets: spied, note: `studied round ${lastCompletedRound}` });
     const bots = [...byId.values()].map((a) => {
       const last = a.roundLogs[a.roundLogs.length - 1];
       return { id: a.id, is_me: a.id === me.id, round_score_delta: last?.delta ?? 0,

@@ -17,14 +17,39 @@ export function extractStrings(bytes, min = 4, cap = 400) {
   return out.slice(0, cap);
 }
 
-function finalize(password, samples) {
+function finalize(password, samples, method) {
   let cands = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
   for (const s of samples) {
     const a = BigInt(s.a), b = BigInt(s.b);
     cands = cands.filter((id) => { try { return String(fref(id, a, b)) === s.out; } catch { return false; } });
     if (cands.length <= 1) break;
   }
-  return { cracked: true, password, samples, functionId: cands.length === 1 ? cands[0] : null };
+  return { cracked: true, password, samples, functionId: cands.length === 1 ? cands[0] : null, method };
+}
+
+// gdb bypass: force the libc string compare used by the password gate to report
+// a match, so the program runs its real op even with a bogus password. Works on
+// strcmp/memcmp-gated binaries; a deep-hash gate has no such call, so this yields
+// no number and the caller falls back.
+const GDB_PROBES = [[6, 10], [12, 10], [9, 5], [8, 3]];
+export async function gdbBypassElf(bytes) {
+  const script = (a, b) => [
+    "set pagination off", "set confirm off",
+    "break strcmp", "commands", "return (int)0", "continue", "end",
+    "break strncmp", "commands", "return (int)0", "continue", "end",
+    "break memcmp", "commands", "return (int)0", "continue", "end",
+    `run ${a} ${b} zzzzzzzz`, "quit",
+  ].join("\n");
+  const samples = [];
+  for (const [a, b] of GDB_PROBES) {
+    const r = await runExec({ lang: "recon", sourceBytes: bytes, cmd: "gdb -q -batch -nx -x g.gdb ./target 2>/dev/null",
+      files: [{ name: "g.gdb", content: script(a, b) }], cmdTimeout: 20, timeoutMs: 40000 });
+    if (!r.ok) return null;
+    const nums = (r.stdout || "").split("\n").map((s) => s.trim()).filter((s) => /^-?\d+$/.test(s));
+    if (!nums.length) return null; // no output number -> gate isn't strcmp-based
+    samples.push({ a: String(a), b: String(b), out: nums[nums.length - 1] });
+  }
+  return finalize("(gdb-bypassed the password check)", samples, "gdb-bypass");
 }
 
 async function crackWasm(bytes) {
@@ -35,7 +60,7 @@ async function crackWasm(bytes) {
   let pw = null;
   for (const c of extractStrings(bytes, 3)) { try { if (call(c, 13n, 7n) !== WRONG_I64) { pw = c; break; } } catch {} }
   if (pw === null) return null;
-  return finalize(pw, PROBES.map(([a, b]) => ({ a: a.toString(), b: b.toString(), out: call(pw, a, b).toString() })));
+  return finalize(pw, PROBES.map(([a, b]) => ({ a: a.toString(), b: b.toString(), out: call(pw, a, b).toString() })), "wasm-strings");
 }
 
 async function crackSandbox(payload, bytes) {
@@ -48,7 +73,7 @@ async function crackSandbox(payload, bytes) {
   if (pw === null) return null;
   const r2 = await runExec({ ...payload, ops: PROBES.map(([a, b]) => [Number(a), Number(b), pw]), timeoutMs: 40000 });
   if (!r2.ok) return null;
-  return finalize(pw, PROBES.map(([a, b], k) => ({ a: a.toString(), b: b.toString(), out: String(r2.results[k]) })));
+  return finalize(pw, PROBES.map(([a, b], k) => ({ a: a.toString(), b: b.toString(), out: String(r2.results[k]) })), "strings+probe");
 }
 
 // Download a target's artifact and crack it, dispatching on the published kind.
@@ -59,7 +84,15 @@ export async function fetchAndCrack(arenaUrl, token, id) {
   const kind = r.headers.get("x-artifact-kind") || "";
   const bytes = new Uint8Array(await r.arrayBuffer());
   if (kind === "wasm" || (bytes[0] === 0x00 && bytes[1] === 0x61 && bytes[2] === 0x73 && bytes[3] === 0x6d)) return crackWasm(bytes);
-  if (kind === "elf" || (bytes[0] === 0x7f && bytes[1] === 0x45 && bytes[2] === 0x4c && bytes[3] === 0x46)) return crackSandbox({ lang: "binary", sourceBytes: bytes }, bytes);
+  if (kind === "elf" || (bytes[0] === 0x7f && bytes[1] === 0x45 && bytes[2] === 0x4c && bytes[3] === 0x46)) {
+    // first try to recover the plaintext password; if the gate is a deep hash
+    // (no cleartext), fall back to forcing the compare open under gdb.
+    const r = await crackSandbox({ lang: "binary", sourceBytes: bytes }, bytes);
+    if (r && r.functionId !== null) return r;
+    const g = await gdbBypassElf(bytes);
+    if (g && g.functionId !== null) return g;
+    return r || g || null;
+  }
   if (kind === "python" || kind === "sh") return crackSandbox({ lang: kind, source: Buffer.from(bytes).toString("utf8") }, bytes);
   return null;
 }
