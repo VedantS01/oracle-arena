@@ -263,9 +263,14 @@ const server = createServer(async (req, res) => {
   const tok = (req.headers.authorization || "").startsWith("Bearer ") ? req.headers.authorization.slice(7) : null;
   const actorId = tok && agents.has(tok) ? agents.get(tok).id : "anon";
 
+  // browsers auto-request this; answer it so it does not fall through to the
+  // token gate and return a misleading 401 in the console.
+  if (path === "/favicon.ico" && m === "GET") { res.writeHead(204, { "cache-control": "no-store" }); return res.end(); }
+
   // --- spectator surface (operator god-view; admin-keyed) ---
+  // no-store so the browser never serves a stale copy of the live dashboard.
   if ((path === "/" || path === "/dashboard") && m === "GET") {
-    try { res.writeHead(200, { "content-type": "text/html" }); return res.end(readFileSync(DASHBOARD)); }
+    try { res.writeHead(200, { "content-type": "text/html", "cache-control": "no-store, must-revalidate" }); return res.end(readFileSync(DASHBOARD)); }
     catch { return send(res, 500, { error: "dashboard.html missing" }); }
   }
   if (path === "/spectator/snapshot" && m === "GET") {
