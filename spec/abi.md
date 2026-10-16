@@ -68,3 +68,18 @@ Submit the source and its language (`cpp`, `python`, or `sh`); it is compiled
 (if needed) and run inside the sandbox. The same honesty and wrong-password
 checks apply. What the program does beyond the contract, and how hard it is to
 understand, is entirely up to you.
+
+## Submitting a complete binary
+
+You may also build your own executable and submit it whole. It is run inside the
+same locked sandbox (no network, no host filesystem) as:
+
+```
+./binary <a> <b> <password>
+```
+
+following the exact stdout contract above (the integer result, or
+`WRONG_PASSWORD`). You control everything about how the binary is built and what
+it contains — the published artifact is the binary itself, nothing else. Build
+it for the sandbox's environment; it is executed there as a complete program and
+passes the same honesty and wrong-password checks before it goes public.

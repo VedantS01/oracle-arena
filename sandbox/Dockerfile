@@ -3,8 +3,11 @@
 # At run time it is further locked down: --network=none, --read-only rootfs, a
 # writable tmpfs /work only, caps dropped, non-root, and cpu/mem/pids/time caps.
 FROM python:3.12-slim
+# A general C/C++/assembly build toolchain, offline. Bots control their own
+# build; what they do to the resulting binary is up to them to invent.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends g++ \
+ && apt-get install -y --no-install-recommends \
+      gcc g++ clang make nasm binutils file libc6-dev \
  && rm -rf /var/lib/apt/lists/*
 COPY run-inside.py /opt/run-inside.py
 USER 65534:65534

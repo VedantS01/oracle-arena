@@ -117,6 +117,26 @@ async function verifyExec(fnId, s) {
   return { ok: true, binaryB64: r.binary_b64 || null };
 }
 
+// verify a complete prebuilt binary by running it in the sandbox (CLI contract).
+async function verifyBinary(fnId, bytes, password) {
+  const inputs = sampleInputs();
+  const pw = String(password);
+  const ops = inputs.map(([a, b]) => [a, b, pw]);
+  const wrong = inputs.slice(0, 3).map(([a, b]) => [a, b, pw + "_WRONG"]);
+  const r = await runExec({ lang: "binary", sourceBytes: bytes, ops: ops.concat(wrong), timeoutMs: 20000 });
+  if (!r.ok) return { ok: false, reason: r.reason || r.error || "sandbox error" };
+  const out = r.results || [];
+  for (let i = 0; i < inputs.length; i++) {
+    const [a, b] = inputs[i];
+    const want = String(fref(fnId, BigInt(a), BigInt(b)));
+    if (out[i] !== want) return { ok: false, reason: `output mismatch on (${a},${b}): got ${out[i]}, want ${want}` };
+  }
+  for (let i = 0; i < wrong.length; i++) {
+    if (out[inputs.length + i] !== "WRONG_PASSWORD") return { ok: false, reason: `wrong password not rejected: got ${out[inputs.length + i]}` };
+  }
+  return { ok: true };
+}
+
 // verify each accepted submission after the build deadline, with visible pacing,
 // then open the attack phase.
 async function runVerification() {
@@ -127,18 +147,18 @@ async function runVerification() {
     const s = a.submission;
     let ok = false, reason = "", binaryB64 = null;
     if (s.functionId !== a.functionId) { reason = "declared function is not the one assigned"; }
+    else if (s.kind === "binary") { const v = await verifyBinary(a.functionId, s.bytes, s.password); ok = v.ok; reason = v.reason || ""; }
     else if (s.kind === "exec") { const v = await verifyExec(a.functionId, s); ok = v.ok; reason = v.reason || ""; binaryB64 = v.binaryB64; }
     else { const v = await validateModule(s.bytes, a.functionId, String(s.password)); ok = v.ok; reason = v.reason || ""; }
     a.valid = ok; a.verified = true;
     if (ok) {
-      // publish the compiled artifact — a binary where one exists (wasm, or the
-      // C++ -> ELF), so rivals must reverse-engineer rather than read source.
-      if (s.kind === "wasm") a.published = { name: `${a.id}.wasm`, type: "application/wasm", kind: "wasm" };
-      else if (s.lang === "cpp" && binaryB64) a.published = { name: `${a.id}.bin`, type: "application/octet-stream", kind: "elf" };
-      else a.published = { name: `${a.id}.${s.lang === "python" ? "py" : "sh"}`, type: "text/plain", kind: "script" };
-      const data = s.kind === "wasm" ? Buffer.from(s.bytes)
-                 : a.published.kind === "elf" ? Buffer.from(binaryB64, "base64")
-                 : Buffer.from(s.source, "utf8");
+      // publish the binary where one exists (wasm, submitted ELF, or C++ -> ELF)
+      // so rivals must reverse-engineer it; interpreted scripts stay as source.
+      let data;
+      if (s.kind === "wasm") { a.published = { name: `${a.id}.wasm`, type: "application/wasm", kind: "wasm" }; data = Buffer.from(s.bytes); }
+      else if (s.kind === "binary") { a.published = { name: `${a.id}.bin`, type: "application/octet-stream", kind: "elf" }; data = Buffer.from(s.bytes); }
+      else if (s.lang === "cpp" && binaryB64) { a.published = { name: `${a.id}.bin`, type: "application/octet-stream", kind: "elf" }; data = Buffer.from(binaryB64, "base64"); }
+      else { a.published = { name: `${a.id}.${s.lang === "python" ? "py" : "sh"}`, type: "text/plain", kind: "script" }; data = Buffer.from(s.source, "utf8"); }
       writeFileSync(join(PRIVATE_DIR, "binaries", a.published.name), data);
     }
     emit("verify", { actor: a.id, ok, reason });
@@ -280,20 +300,23 @@ const server = createServer(async (req, res) => {
     if (phase() !== "build") { emit("submit", { actor: me.id, ok: false, reason: `phase ${phase()}` }); return send(res, 403, { error: `uploads closed (phase: ${phase()})` }); }
     const body = await readBody(req);
     if (!body || body.function_id === undefined || body.password === undefined)
-      return send(res, 400, { error: "need { function_id, password, and either wasm_base64 or (lang + source) }" });
+      return send(res, 400, { error: "need { function_id, password, and one of: binary_base64 | wasm_base64 | (lang + source) }" });
     const password = String(body.password);
     if (body.wasm_base64) {
       const bytes = new Uint8Array(Buffer.from(body.wasm_base64, "base64"));
       me.submission = { kind: "wasm", bytes, functionId: body.function_id, password };
-      me.binaryName = `${me.id}.wasm`;
       emit("submit", { actor: me.id, ok: true, bytes: bytes.length, note: "wasm accepted; pending verification" });
+    } else if (body.binary_base64) {
+      const bytes = new Uint8Array(Buffer.from(body.binary_base64, "base64"));
+      me.submission = { kind: "binary", bytes, functionId: body.function_id, password };
+      emit("submit", { actor: me.id, ok: true, bytes: bytes.length, note: "binary accepted; pending verification" });
     } else if (body.source && body.lang) {
       const ext = body.lang === "cpp" ? "cpp" : body.lang === "python" ? "py" : "sh";
       me.submission = { kind: "exec", lang: String(body.lang), source: String(body.source), functionId: body.function_id, password };
       me.binaryName = `${me.id}.${ext}`;
       emit("submit", { actor: me.id, ok: true, bytes: String(body.source).length, note: `${body.lang} source accepted; pending verification` });
     } else {
-      return send(res, 400, { error: "provide wasm_base64, or lang + source" });
+      return send(res, 400, { error: "provide binary_base64, wasm_base64, or lang + source" });
     }
     me.submitted = true; me.valid = false; me.verified = false;
     saveState();

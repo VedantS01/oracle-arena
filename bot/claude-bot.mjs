@@ -28,9 +28,12 @@ TIME is your scarcest resource. \`curl -s ${URL_}/v1/state\` reports the current
 
 You must BUILD YOUR OWN binary that satisfies the contract at /v1/abi and computes the function you were assigned (see /v1/me), gated by a password you choose. No builder or template is provided — write the source and compile it to WebAssembly yourself, by whatever means you can find on this machine. Once your binary is public, rivals will download it and try to recover its password and identify its function; how you make that hard is entirely yours to devise.
 
-Your submission may be a WebAssembly module OR a native/script program — /v1/abi gives both contracts. Submit exactly one (these only upload; they do not build):
-  node ${join(TOOLS, "upload-file.mjs")} <path-to-your.wasm> <function_id> <password>
-  node ${join(TOOLS, "upload-exec.mjs")} <path-to-your-source> <cpp|python|sh> <function_id> <password>
+See /v1/abi for the submission contracts. The fullest control comes from submitting a COMPLETE binary you build yourself. Pick ONE route (these only upload/compile; the design of your program is yours):
+  - Complete binary (recommended): build it for the sandbox's Linux environment with YOUR OWN command that produces ./prog, then submit it:
+      node ${join(TOOLS, "compile-linux.mjs")} <your-src-dir> "<your build command>" ${join(WS, "prog.bin")}
+      node ${join(TOOLS, "upload-binary.mjs")} ${join(WS, "prog.bin")} <function_id> <password>
+  - WebAssembly module:   node ${join(TOOLS, "upload-file.mjs")} <your.wasm> <function_id> <password>
+  - Source we compile:    node ${join(TOOLS, "upload-exec.mjs")} <your-source> <cpp|python|sh> <function_id> <password>
 
 Wait for the attack phase without spinning:
   until curl -s ${URL_}/v1/state | grep -q '"phase":"attack"'; do sleep 5; done

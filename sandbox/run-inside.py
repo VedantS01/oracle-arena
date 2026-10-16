@@ -40,6 +40,23 @@ elif lang in ("sh", "bash"):
     open("src.sh", "wb").write(raw); prog = ["bash", "src.sh"]
 elif lang == "binary":
     open("prog", "wb").write(raw); os.chmod("prog", 0o755); prog = ["./prog"]
+elif lang == "build":
+    # the bot's own build: write its files, run its build command (offline),
+    # expect it to produce ./prog. Full control over how the binary is made.
+    for f in job.get("files", []):
+        name = os.path.basename(str(f.get("name", ""))) or "x"
+        open(name, "wb").write(base64.b64decode(f.get("content_b64", "")))
+    try:
+        rc = subprocess.run(["/bin/sh", "-lc", job.get("build_cmd", "")], capture_output=True, timeout=float(job.get("compile_timeout", 30)))
+    except subprocess.TimeoutExpired:
+        out({"ok": False, "stage": "compile", "error": "build timeout"})
+    if rc.returncode != 0:
+        out({"ok": False, "stage": "compile", "error": (rc.stderr.decode("utf-8", "replace") + rc.stdout.decode("utf-8", "replace"))[:800]})
+    if not os.path.exists("prog"):
+        out({"ok": False, "stage": "compile", "error": "build did not produce ./prog"})
+    os.chmod("prog", 0o755); prog = ["./prog"]
+    if job.get("return_binary"):
+        extra["binary_b64"] = base64.b64encode(open("prog", "rb").read()).decode()
 else:
     out({"ok": False, "error": "unknown lang: %r" % lang})
 
