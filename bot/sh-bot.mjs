@@ -23,8 +23,8 @@ FIRST, learn the game and your secret identity:
   curl -s ${AUTH} ${URL_}/v1/state          # public board, whose turn it is, current step + seconds_left
 
 THEN loop until the game ends (poll every ~5s). Each iteration: GET /v1/state and GET /v1/forum (the full public discussion), then:
-  - If step.kind == "discussion": read the forum and, if you are alive and have not spoken in THIS window, POST one short, pointed message — accuse, defend, question, build trust, or bluff. Public to everyone:
-      curl -s -X POST ${AUTH} -H "content-type: application/json" -d '{"msg":"..."}' ${URL_}/v1/say
+  - If step.kind == "discussion": you may post at most ONE message per window (a second is rejected). Keep it to a SINGLE short sentence, 25 words max — this is spoken aloud, so brevity matters. EARLY in the game (few policies on the board) there is almost nothing to deduce: say one brief thing or stay silent. Become more vocal only as policies, votes and executions give you real evidence. Read /v1/forum first so you react instead of repeating others:
+      curl -s -X POST ${AUTH} -H "content-type: application/json" -d '{"msg":"<one short sentence>"}' ${URL_}/v1/say
   - If step.kind == "action" AND you are step.actor (or you are listed in step.actors for a vote), submit the move the step names:
       nominate:   curl -s -X POST ${AUTH} -H "content-type: application/json" -d '{"chancellor":"<id from step.options>"}' ${URL_}/v1/nominate
       vote:       curl -s -X POST ${AUTH} -H "content-type: application/json" -d '{"ja":true}'  ${URL_}/v1/vote      (true=Ja/elect, false=Nein/reject)

@@ -83,7 +83,7 @@ const speechIdle = () => speechQ.length === 0 && !speaking;
 function narrate(text) { emit("narrate", { text }); enqueueSpeech({ voice: NARR_VOICE, text }); }
 
 function post(from, msg) {
-  const p = { seq: forum.length + 1, from, msg: String(msg).replace(/\s+/g, " ").trim().slice(0, 700), t: now(), round: game?.round, phase: cur?.kind };
+  const p = { seq: forum.length + 1, from, msg: String(msg).replace(/\s+/g, " ").trim().slice(0, 220), t: now(), round: game?.round, phase: cur?.kind };
   forum.push(p); if (forum.length > 2000) forum.shift();
   // reveal + speak this post when the queue reaches it, so text flows at talking pace
   enqueueSpeech({ voice: VOICES[from] || null, text: p.msg, onStart: () => emit("say", { actor: from, msg: p.msg, speaking: true }) });
@@ -104,8 +104,11 @@ function advance() {
   if (!game || game.phase === "game_over") return;
   const pend = game.pending();
   const key = engineKey();
-  // decide whether this engine step opens with a discussion window
-  const wantsTalk = (pend.type in DISCUSS_BEFORE);
+  // decide whether this engine step opens with a discussion window. Early on
+  // (no policy enacted yet) there is nothing to deduce, so skip the pre-NOMINATION
+  // debate entirely — the president just picks, and the pre-vote debate is brief.
+  const enacted = (game.liberalPolicies || 0) + (game.fascistPolicies || 0);
+  const wantsTalk = (pend.type in DISCUSS_BEFORE) && !(pend.type === "nominate" && enacted < 1);
   if (wantsTalk && !talkedKeys.has(key)) {
     talkedKeys.add(key);
     let topic, narr;
@@ -121,9 +124,13 @@ function advance() {
 }
 
 function startDiscussion(topic, key) {
-  const floor = Math.min(DISCUSSION_MS * 0.5, 5000); // always give talk at least this long
-  cur = { kind: "discussion", key, topic, openedAt: now(), floorUntil: now() + floor, deadline: now() + DISCUSSION_MS, posted: new Set() };
-  emit("discussion_open", { topic, round: game.round, deadline: cur.deadline, president: game.president, chancellor: game.chancellor });
+  const floor = Math.min(DISCUSSION_MS * 0.5, 4000); // always give talk at least this long
+  // how many must speak before the window can close — few early (nothing to
+  // deduce yet), more as policies/suspicions accumulate.
+  const enacted = (game.liberalPolicies || 0) + (game.fascistPolicies || 0);
+  const need = Math.max(1, Math.min(game.alive().length, 2 + enacted));
+  cur = { kind: "discussion", key, topic, openedAt: now(), floorUntil: now() + floor, deadline: now() + DISCUSSION_MS, posted: new Set(), need };
+  emit("discussion_open", { topic, round: game.round, deadline: cur.deadline, need, president: game.president, chancellor: game.chancellor });
 }
 function startAction(pend, key) {
   if (pend.type === "vote") curVotes = {};
@@ -164,8 +171,8 @@ function tick() {
   if (cur.kind === "discussion") {
     // never cut speech off mid-sentence: the window only closes once the voice
     // queue is idle, so written messages flow at the rate they are spoken.
-    const everyoneSpoke = game.alive().every((p) => cur.posted.has(p.id));
-    const close = speechIdle() && (now() >= cur.deadline || (everyoneSpoke && now() >= cur.floorUntil));
+    const enough = cur.posted.size >= (cur.need || game.alive().length);
+    const close = speechIdle() && (now() >= cur.deadline || (enough && now() >= cur.floorUntil));
     if (close) { emit("discussion_close", { round: game.round }); advance(); }
     return;
   }
@@ -284,6 +291,7 @@ const server = createServer(async (req, res) => {
   if (path === "/v1/say" && m === "POST") {
     if (cur?.kind !== "discussion") return send(res, 409, { error: "no discussion window open right now" });
     if (!game.isAlive(me.id)) return send(res, 403, { error: "the dead do not speak" });
+    if (cur.posted.has(me.id)) return send(res, 409, { error: "you have already spoken in this debate — one statement per window; wait for the next" });
     const b = await readBody(req); if (!b?.msg) return send(res, 400, { error: "need { msg }" });
     cur.posted.add(me.id); const p = post(me.id, b.msg);
     return send(res, 200, { ok: true, seq: p.seq });
