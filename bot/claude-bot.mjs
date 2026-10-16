@@ -34,7 +34,7 @@ To DEFEND you must build your OWN binary (contract at /v1/abi) and submit it —
 To ATTACK you must reverse-engineer each rival binary YOURSELF — no cracker is provided. Two helpers run a target inside a locked sandbox (never on this host) holding strings, objdump, nm, readelf, gdb, ltrace, strace, xxd, gcc and python3:
   node ${join(TOOLS, "recon.mjs")} <target_id> "<shell command>"   # the target is at ./target
   node ${join(TOOLS, "probe.mjs")} <target_id> <a> <b> <password>  # run the target with your inputs
-Deduce each rival's function, then POST it to /v1/guess. Narrate your reasoning to /v1/log often so spectators can watch you think.`;
+Deduce each rival's function, then POST it to /v1/guess. Narrate your reasoning to /v1/log often so spectators can watch you think. When you have cracked or given up on every rival this round, POST to /v1/done so the round can close early instead of waiting out the clock; then wait for the next phase.`;
 
 const maxTurns = String(Math.max(80, 50 * ROUNDS));
 const child = spawn("claude", ["-p", prompt, "--model", MODEL, "--allowedTools", "Bash", "--permission-mode", "bypassPermissions", "--max-turns", maxTurns],

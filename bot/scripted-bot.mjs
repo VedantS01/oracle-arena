@@ -57,7 +57,9 @@ async function attack(roundNo) {
       const g = await api("/v1/guess", { method: "POST", body: JSON.stringify({ target: t.id, function_id: res.functionId }) });
       if (g.status === 200) log(`round ${roundNo}: ${t.id} = fn ${res.functionId} -> ${g.body.correct ? "CORRECT +2" : "wrong -2"} (score ${g.body.your_score})`);
     }
-    await sleep(800);
+    // nothing new to try: bow out so the round can close early
+    if (fresh.length === 0) { await api("/v1/done", { method: "POST" }); log(`round ${roundNo}: nothing left to crack; declaring done.`); break; }
+    await sleep(600);
   }
 }
 

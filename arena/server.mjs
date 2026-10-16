@@ -24,6 +24,7 @@ const ADMIN_KEY = process.env.ARENA_ADMIN_KEY || "dev-admin";
 const PRIVATE_DIR = process.env.PRIVATE_DIR || join(HERE, ".private");
 const LOCK_AT = Number(process.env.LOCK_AT || 5); // attempts that lock a binary
 const START_SCORE = 10;
+const SUBMIT_REWARD = Number(process.env.SUBMIT_REWARD || 10); // +points for a valid, on-time binary
 const ROUNDS = Number(process.env.ROUNDS || 1);          // tournament length
 const BREAK_MS = Number(process.env.BREAK_MS || 2 * 60_000); // study break between rounds
 
@@ -80,7 +81,7 @@ function beginRound(n, reassign) {
     if (reassign) a.functionId = Math.floor(Math.random() * 10);
     a.submitted = false; a.valid = false; a.verified = false; a.submission = null; a.binaryName = null;
     a.published = null; a.attempts = 0; a.locked = false; a.guessedBy = new Set(); a.iGuessed = new Set();
-    a.roundStartScore = a.score; a.roundIdentified = 0; a.log = [];
+    a.roundStartScore = a.score; a.roundIdentified = 0; a.log = []; a.doneRound = false;
     if (reassign) emit("register", { actor: a.id, function_id: a.functionId, function_name: fnName(a.functionId), round: n });
   }
   startedAt = now(); attackStartedAt = null; breakStartedAt = null;
@@ -197,6 +198,7 @@ async function runVerification() {
     else if (s.kind === "exec") { const v = await verifyExec(a.functionId, s); ok = v.ok; reason = v.reason || ""; binaryB64 = v.binaryB64; }
     else { const v = await validateModule(s.bytes, a.functionId, String(s.password)); ok = v.ok; reason = v.reason || ""; }
     a.valid = ok; a.verified = true;
+    if (ok) a.score += SUBMIT_REWARD; // reward a valid, on-time submission
     if (ok) {
       // publish the binary where one exists (wasm, submitted ELF, or C++ -> ELF)
       // so rivals must reverse-engineer it; interpreted scripts stay as source.
@@ -207,7 +209,7 @@ async function runVerification() {
       else { a.published = { name: `${a.id}.${s.lang === "python" ? "py" : "sh"}`, type: "text/plain", kind: s.lang }; data = Buffer.from(s.source, "utf8"); }
       writeFileSync(join(PRIVATE_DIR, "binaries", a.published.name), data);
     }
-    emit("verify", { actor: a.id, ok, reason });
+    emit("verify", { actor: a.id, ok, reason, reward: ok ? SUBMIT_REWARD : 0, score: a.score });
     saveState();
   }
   emit("verify_done", { valid: subs.filter((a) => a.valid).length });
@@ -216,12 +218,19 @@ async function runVerification() {
   emit("phase", { phase: "attack", round, rounds_total: ROUNDS });
 }
 
+// A round can close EARLY to save time: build ends once everyone has a
+// submission on file; attack ends once every bot has either run out of reachable
+// targets or declared itself done. The break is always its full length.
+const allSubmitted = () => byId.size > 0 && [...byId.values()].every((a) => a.submitted);
+const remainingTargets = (a) => [...byId.values()].filter((t) => t.valid && !t.locked && t.id !== a.id && !a.iGuessed.has(t.id));
+const attackSettled = () => byId.size > 0 && [...byId.values()].every((a) => a.doneRound || remainingTargets(a).length === 0);
+
 let verifying = false;
 setInterval(() => {
-  if (phaseState === "build" && startedAt !== null && now() >= startedAt + BUILD_MS && !verifying) {
+  if (phaseState === "build" && startedAt !== null && !verifying && (now() >= startedAt + BUILD_MS || allSubmitted())) {
     phaseState = "verify"; emit("phase", { phase: "verify", round, rounds_total: ROUNDS });
     verifying = true; runVerification().finally(() => { verifying = false; });
-  } else if (phaseState === "attack" && attackStartedAt !== null && now() >= attackStartedAt + ATTACK_MS) {
+  } else if (phaseState === "attack" && attackStartedAt !== null && (now() >= attackStartedAt + ATTACK_MS || attackSettled())) {
     endAttack();
   } else if (phaseState === "break" && breakStartedAt !== null && now() >= breakStartedAt + BREAK_MS) {
     beginRound(round + 1, true);
@@ -289,7 +298,7 @@ const server = createServer(async (req, res) => {
       const a = { id, token, functionId, brain: brains ? String(brains[i]) : "unknown",
                   score: START_SCORE, roundStartScore: START_SCORE, roundIdentified: 0,
                   submitted: false, valid: false, verified: false, submission: null, binaryName: null,
-                  attempts: 0, locked: false, guessedBy: new Set(), iGuessed: new Set(), log: [], roundLogs: [] };
+                  attempts: 0, locked: false, doneRound: false, guessedBy: new Set(), iGuessed: new Set(), log: [], roundLogs: [] };
       agents.set(token, a); byId.set(id, a);
       emit("register", { actor: id, function_id: functionId, function_name: fnName(functionId), brain: a.brain });
       out.push({ id, token, assigned_function_id: functionId });
@@ -311,7 +320,7 @@ const server = createServer(async (req, res) => {
       how_to_play: [
         "You are secretly assigned ONE function id. GET /v1/me for your assigned_function_id; GET /v1/functions for what each id computes. Your assignment is RE-ASSIGNED every round.",
         "The contest runs for several ROUNDS (see round / rounds_total in /v1/state). Everyone starts at 10 points and score is CUMULATIVE across all rounds.",
-        "Each round runs on one clock (GET /v1/state for phase, round, seconds_remaining). BUILD: produce a binary meeting the contract at /v1/abi that computes YOUR assigned function behind a password you choose, and submit it before the HARD deadline (late submissions are discarded; resubmitting replaces your entry). VERIFY: the server checks every submission. ATTACK: rival binaries become PUBLIC — GET /v1/targets, download each, work out its password and which function it computes, and guess (correct +2 to you / -2 to them; wrong the reverse; a binary locks after enough attempts, so move fast).",
+        `Each round runs on one clock (GET /v1/state for phase, round, seconds_remaining). BUILD: produce a binary meeting the contract at /v1/abi that computes YOUR assigned function behind a password you choose, and submit it before the HARD deadline (late submissions are discarded; resubmitting replaces your entry). A binary that verifies honest earns you +${SUBMIT_REWARD} points — so submitting a valid binary every round matters. VERIFY: the server checks every submission. ATTACK: rival binaries become PUBLIC — GET /v1/targets, download each, work out its password and which function it computes, and guess (correct +2 to you / -2 to them; wrong the reverse; a binary locks after enough attempts, so move fast). Phases end as soon as everyone is finished — the build phase closes once all players have submitted, and the attack phase closes once every player has run out of targets or POSTed /v1/done to bow out — so do not dawdle.`,
         "Between rounds there is a 2-minute BREAK to strategize. The /v1/study endpoint is reachable only during that break.",
         "TIME is your scarcest resource — plan against seconds_remaining. Narrate your reasoning to /v1/log so it is visible. Keep playing every round until /v1/state shows phase \"ended\".",
       ],
@@ -348,6 +357,15 @@ const server = createServer(async (req, res) => {
     me.log.push({ t: now(), round, msg });
     if (me.log.length > 300) me.log.shift();
     emit("bot", { actor: me.id, msg });
+    return send(res, 200, { ok: true });
+  }
+
+  // declare yourself finished attacking this round — lets the round close early
+  // (the attack phase ends once every bot is done or has no targets left).
+  if (path === "/v1/done" && m === "POST") {
+    if (phase() !== "attack") return send(res, 403, { error: `only during the attack phase (phase: ${phase()})` });
+    me.doneRound = true;
+    emit("bot", { actor: me.id, msg: "— declares its round complete —" });
     return send(res, 200, { ok: true });
   }
 
