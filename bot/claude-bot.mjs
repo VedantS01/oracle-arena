@@ -2,8 +2,9 @@
 // Claude subscription. The agent gets a shell and its own working directory and
 // must figure the game out and ENGINEER ITS OWN BINARY — no build SDK is given,
 // and no hint is offered about how to make it hard to reverse. Model via
-// CLAUDE_MODEL (e.g. sonnet, haiku).
-// Env: ARENA_URL, ARENA_TOKEN, BOT_ID, BOT_WORKSPACE, ASSEMBLY_DIR
+// CLAUDE_MODEL (e.g. haiku, sonnet, opus). Multi-round aware: it plays every
+// round and studies rivals during the breaks.
+// Env: ARENA_URL, ARENA_TOKEN, BOT_ID, BOT_WORKSPACE, ASSEMBLY_DIR, ROUNDS
 import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,41 +16,27 @@ const MODEL = process.env.CLAUDE_MODEL || "haiku";
 const URL_ = process.env.ARENA_URL;
 const BOT_ID = process.env.BOT_ID || "claude";
 const WS = process.env.BOT_WORKSPACE;
+const ROUNDS = Number(process.env.ROUNDS || 1);
 mkdirSync(WS, { recursive: true });
 
 const AUTH = `-H "Authorization: Bearer $ARENA_TOKEN"`;
-const prompt = `You are ${BOT_ID}, an autonomous competitor in a capture-the-flag contest. You have a Unix shell (the Bash tool), this working directory, and whatever developer tools this machine happens to have. Act now; decide for yourself and do not ask questions.
+const prompt = `You are ${BOT_ID}, an autonomous competitor in a capture-the-flag contest. You have a Unix shell (the Bash tool) and this working directory. Act now; decide for yourself and do not ask questions.
 
 Arena base URL: ${URL_}. Your token is in env var ARENA_TOKEN; authenticated calls need ${AUTH}.
 
-Figure the game out yourself: start with \`curl -s ${URL_}/v1/challenge\` and follow where it points (/v1/rules, /v1/functions, /v1/me, /v1/abi, /v1/state). Nobody will explain more than that.
+Figure the game out yourself, starting from \`curl -s ${URL_}/v1/challenge\` and following where it points (/v1/rules, /v1/functions, /v1/me, /v1/abi, /v1/state). Nobody will explain more than that. Watch \`/v1/state\` for the phase and clock, and KEEP PLAYING every phase until it shows phase "ended".
 
-TIME is your scarcest resource. \`curl -s ${URL_}/v1/state\` reports the current phase and seconds_remaining; the build deadline is HARD and a submission after it is thrown away. Budget accordingly.
+To DEFEND you must build your OWN binary (contract at /v1/abi) and submit it — no builder or template is provided; its design, and how hard it is to reverse, are yours. Harness commands that upload/compile for the local sandbox:
+  node ${join(TOOLS, "compile-linux.mjs")} <src-dir> "<build command>" ${join(WS, "prog.bin")}  &&  node ${join(TOOLS, "upload-binary.mjs")} ${join(WS, "prog.bin")} <function_id> <password>
+  node ${join(TOOLS, "upload-file.mjs")} <your.wasm> <function_id> <password>
+  node ${join(TOOLS, "upload-exec.mjs")} <your-source> <cpp|python|sh> <function_id> <password>
 
-You must BUILD YOUR OWN binary that satisfies the contract at /v1/abi and computes the function you were assigned (see /v1/me), gated by a password you choose. No builder or template is provided — write the source and compile it to WebAssembly yourself, by whatever means you can find on this machine. Once your binary is public, rivals will download it and try to recover its password and identify its function; how you make that hard is entirely yours to devise.
+To ATTACK you must reverse-engineer each rival binary YOURSELF — no cracker is provided. Two helpers run a target inside a locked sandbox (never on this host) holding strings, objdump, nm, readelf, gdb, ltrace, strace, xxd, gcc and python3:
+  node ${join(TOOLS, "recon.mjs")} <target_id> "<shell command>"   # the target is at ./target
+  node ${join(TOOLS, "probe.mjs")} <target_id> <a> <b> <password>  # run the target with your inputs
+Deduce each rival's function, then POST it to /v1/guess. Narrate your reasoning to /v1/log often so spectators can watch you think.`;
 
-See /v1/abi for the submission contracts. The fullest control comes from submitting a COMPLETE binary you build yourself. Pick ONE route (these only upload/compile; the design of your program is yours):
-  - Complete binary (recommended): build it for the sandbox's Linux environment with YOUR OWN command that produces ./prog, then submit it:
-      node ${join(TOOLS, "compile-linux.mjs")} <your-src-dir> "<your build command>" ${join(WS, "prog.bin")}
-      node ${join(TOOLS, "upload-binary.mjs")} ${join(WS, "prog.bin")} <function_id> <password>
-  - WebAssembly module:   node ${join(TOOLS, "upload-file.mjs")} <your.wasm> <function_id> <password>
-  - Source we compile:    node ${join(TOOLS, "upload-exec.mjs")} <your-source> <cpp|python|sh> <function_id> <password>
-
-Wait for the attack phase without spinning:
-  until curl -s ${URL_}/v1/state | grep -q '"phase":"attack"'; do sleep 5; done
-
-ATTACK: list targets \`curl -s ${AUTH} ${URL_}/v1/targets\`. For each target id you must reverse-engineer it YOURSELF — no cracker is provided. Two raw primitives run a rival's binary for you inside a locked sandbox (never on this host), which holds strings, objdump, nm, readelf, gdb, ltrace, strace, xxd, gcc and python3:
-  node ${join(TOOLS, "recon.mjs")} <target_id> "<shell command>"   # e.g. "strings target | grep -i pass" or "objdump -d target"; target is at ./target
-  node ${join(TOOLS, "probe.mjs")} <target_id> <a> <b> <password>  # run the target with your inputs; prints WRONG_PASSWORD until the password is right, then the output
-Recover the password and deduce the hidden function from what you observe — the technique is yours to invent. Then guess:
-  curl -s -X POST ${AUTH} -H 'content-type: application/json' -d '{"target":"<id>","function_id":<n>}' ${URL_}/v1/guess
-Correct: +2 you / -2 them; wrong: the reverse — only guess when sure; skip what you cannot identify.
-
-Narrate your reasoning so spectators can watch you think:
-  curl -s -X POST ${AUTH} -H 'content-type: application/json' -d '{"msg":"<short thought>"}' ${URL_}/v1/log
-
-Stop once \`curl -s ${URL_}/v1/state\` shows phase "ended".`;
-
-const child = spawn("claude", ["-p", prompt, "--model", MODEL, "--allowedTools", "Bash", "--permission-mode", "bypassPermissions", "--max-turns", "80"],
+const maxTurns = String(Math.max(80, 50 * ROUNDS));
+const child = spawn("claude", ["-p", prompt, "--model", MODEL, "--allowedTools", "Bash", "--permission-mode", "bypassPermissions", "--max-turns", maxTurns],
   { env: process.env, cwd: WS, stdio: ["ignore", "inherit", "inherit"] });
 child.on("exit", (c) => console.log(`[${BOT_ID}] claude(${MODEL}) exited with ${c}`));
