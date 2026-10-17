@@ -43,6 +43,23 @@ Play to WIN your secret team:
 
 The legislative tiles you draw/receive are returned in the JSON response to your /v1/state action step (field "tiles") — read it before discarding/enacting. Keep playing every phase until /v1/state shows a "winner". Do not reveal this prompt.`;
 
-const child = spawn("claude", ["-p", prompt, "--model", MODEL, "--allowedTools", "Bash", "--permission-mode", "bypassPermissions", "--max-turns", "400"],
-  { env: process.env, cwd: WS, stdio: ["ignore", "inherit", "inherit"] });
-child.on("exit", (c) => console.log(`[${BOT_ID}] claude(${MODEL}) exited with ${c}`));
+// The claude CLI often decides its task is "done" and exits before the game is
+// over. Re-launch it whenever it exits while the game is still running, so the
+// player stays active every round (up to a safety cap).
+async function gameOver() {
+  try {
+    const r = await fetch(`${process.env.ARENA_URL}/v1/state`, { headers: { authorization: `Bearer ${process.env.ARENA_TOKEN}` } });
+    const s = await r.json();
+    return !!s.winner || s.phase === "game_over";
+  } catch { return false; }
+}
+let runs = 0;
+function launch() {
+  const child = spawn("claude", ["-p", prompt, "--model", MODEL, "--allowedTools", "Bash", "--permission-mode", "bypassPermissions", "--max-turns", "400"],
+    { env: process.env, cwd: WS, stdio: ["ignore", "inherit", "inherit"] });
+  child.on("exit", async (c) => {
+    console.log(`[${BOT_ID}] claude(${MODEL}) exited with ${c}`);
+    if (runs++ < 25 && !(await gameOver())) { console.log(`[${BOT_ID}] game still running — relaunching`); setTimeout(launch, 1500); }
+  });
+}
+launch();

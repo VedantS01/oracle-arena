@@ -103,7 +103,13 @@ function drainSpeech() {
     const args = []; if (SAY_RATE) args.push("-r", String(SAY_RATE)); if (item.voice) args.push("-v", item.voice);
     args.push(item.text.slice(0, 600));
     const ch = spawn("say", args, { stdio: "ignore" });
-    ch.on("exit", finish); ch.on("error", finish);
+    // Watchdog: if `say` wedges (Core Audio can hang mid-playback under load), it
+    // must never freeze the game — kill it after 25s and move on. No utterance
+    // legitimately takes that long.
+    let fired = false;
+    const once = () => { if (fired) return; fired = true; clearTimeout(wd); finish(); };
+    const wd = setTimeout(() => { try { ch.kill("SIGKILL"); } catch {} once(); }, 25000);
+    ch.on("exit", once); ch.on("error", once);
   } catch { finish(); }
 }
 function enqueueSpeech(item) { speechQ.push(item); drainSpeech(); }
