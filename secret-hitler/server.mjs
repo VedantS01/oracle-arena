@@ -54,15 +54,34 @@ let VOICES = {};            // alias -> macOS voice name
 let NARR_VOICE = null;      // the narrator's voice
 const speechQ = [];         // { voice, text, onStart }
 let speaking = false;
-// A curated allowlist of CLEAR, distinct speech voices (verified installed on
-// this machine). We never fall back to macOS novelty voices (Bells, Boing,
-// Bubbles, Zarvox, …), which are unintelligible sound-effect voices.
-const CLEAR_VOICES = (process.env.VOICES || "Samantha|Daniel (English (UK))|Karen|Reed (English (US))|Moira (English (Ireland))|Rocko (English (US))|Flo (English (US))|Eddy (English (US))").split("|");
-const NARRATOR_V = process.env.NARRATOR_VOICE || "Grandpa (English (US))";
+// Voice quality tiers, worst → best:
+//   compact  (Samantha, Daniel, Karen, Moira …) — robotic, "coarse"
+//   new-gen  (Eddy, Flo, Reed, Rocko, Sandy, Shelley, Grandma, Grandpa) — smoother
+//   Enhanced / Premium (downloaded in System Settings) — high fidelity
+// We auto-pick Enhanced/Premium when installed, else the new-gen set, and never
+// the novelty voices. Override the whole roster with the VOICES env (pipe-sep).
+function listEnVoices() {
+  try {
+    const r = spawnSync("say", ["-v", "?"], { encoding: "utf8" });
+    if (r.status !== 0) return [];
+    return r.stdout.split("\n").map((l) => { const mm = l.match(/^(.*?)\s{2,}en_[A-Z]{2}/); return mm ? mm[1].trim() : null; }).filter(Boolean);
+  } catch { return []; }
+}
+const NEWGEN = ["Eddy (English (US))", "Flo (English (US))", "Reed (English (US))", "Rocko (English (US))", "Sandy (English (US))", "Shelley (English (US))", "Grandma (English (US))", "Grandpa (English (US))", "Reed (English (UK))", "Rocko (English (UK))", "Grandpa (English (UK))"];
+function voicePool() {
+  if (process.env.VOICES) return process.env.VOICES.split("|");
+  const all = listEnVoices();
+  const premium = all.filter((n) => /\((Premium|Enhanced)\)/i.test(n));
+  if (premium.length >= 2) return premium;                       // best: use downloaded HQ voices
+  const newgen = NEWGEN.filter((n) => all.includes(n));
+  if (newgen.length >= 4) return newgen;                         // better: smoother new-gen voices
+  return ["Samantha", "Daniel (English (UK))", "Karen", "Moira (English (Ireland))"]; // last resort
+}
 function assignVoices(ids) {
-  VOICES = {}; ids.forEach((id, i) => { VOICES[id] = CLEAR_VOICES[i % CLEAR_VOICES.length]; });
-  NARR_VOICE = NARRATOR_V;
-  emit("voices", { voices: VOICES, narrator: NARR_VOICE, tts: TTS });
+  const pool = voicePool();
+  VOICES = {}; ids.forEach((id, i) => { VOICES[id] = pool[i % pool.length]; });
+  NARR_VOICE = process.env.NARRATOR_VOICE || pool[ids.length % pool.length] || pool[0];
+  emit("voices", { voices: VOICES, narrator: NARR_VOICE, tts: TTS, pool });
 }
 function drainSpeech() {
   if (speaking) return;
