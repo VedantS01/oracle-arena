@@ -86,7 +86,6 @@ function assignVoices(ids) {
   NARR_VOICE = process.env.NARRATOR_VOICE || pool[ids.length % pool.length] || pool[0];
   emit("voices", { voices: VOICES, narrator: NARR_VOICE, tts: TTS, pool });
 }
-let ttsN = 0;
 function drainSpeech() {
   if (speaking) return;
   const item = speechQ.shift();
@@ -95,21 +94,13 @@ function drainSpeech() {
   try { item.onStart && item.onStart(); } catch {}
   const finish = () => { speaking = false; setTimeout(drainSpeech, 180); }; // a beat between speakers
   if (!TTS) { speaking = false; return drainSpeech(); }
-  // Render to a file first, then play the finished buffer with afplay. Realtime
-  // `say` playback can stutter/drop under CPU load (8 bot processes), which sounds
-  // "interrupted"; playing a pre-rendered buffer is immune to that jitter.
+  // Plain realtime `say`. On this machine afplay playback stutters, but realtime
+  // `say` with a compact voice plays clean, so we speak directly.
   try {
-    const f = join(tmpdir(), `sh-tts-${process.pid}-${++ttsN}.aiff`);
-    const args = ["-o", f]; if (SAY_RATE) args.push("-r", String(SAY_RATE)); if (item.voice) args.push("-v", item.voice);
+    const args = []; if (SAY_RATE) args.push("-r", String(SAY_RATE)); if (item.voice) args.push("-v", item.voice);
     args.push(item.text.slice(0, 600));
-    const r = spawn("say", args, { stdio: "ignore" });
-    r.on("error", finish);
-    r.on("exit", (code) => {
-      if (code !== 0) return finish();
-      const a = spawn("afplay", [f], { stdio: "ignore" });
-      const done = () => { try { unlinkSync(f); } catch {} finish(); };
-      a.on("exit", done); a.on("error", done);
-    });
+    const ch = spawn("say", args, { stdio: "ignore" });
+    ch.on("exit", finish); ch.on("error", finish);
   } catch { finish(); }
 }
 function enqueueSpeech(item) { speechQ.push(item); drainSpeech(); }
