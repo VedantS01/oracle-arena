@@ -64,7 +64,7 @@ function listEnVoices() {
   try {
     const r = spawnSync("say", ["-v", "?"], { encoding: "utf8" });
     if (r.status !== 0) return [];
-    return r.stdout.split("\n").map((l) => { const mm = l.match(/^(.*?)\s{2,}en_[A-Z]{2}/); return mm ? mm[1].trim() : null; }).filter(Boolean);
+    return r.stdout.split("\n").map((l) => { const i = l.search(/\s+en_[A-Z]{2}\b/); return i > 0 ? l.slice(0, i).trim() : null; }).filter(Boolean);
   } catch { return []; }
 }
 const NEWGEN = ["Eddy (English (US))", "Flo (English (US))", "Reed (English (US))", "Rocko (English (US))", "Sandy (English (US))", "Shelley (English (US))", "Grandma (English (US))", "Grandpa (English (US))", "Reed (English (UK))", "Rocko (English (UK))", "Grandpa (English (UK))"];
