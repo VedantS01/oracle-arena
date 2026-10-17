@@ -6,3 +6,4 @@ build/
 .wrangler/
 dist/
 *.log
+.sh-run/
