@@ -43,8 +43,11 @@ const reg = await agentsPost(BRAINS, ALIASES);
 console.log(`\n[sh] registered ${reg.length} players; dashboard → ${URL_}/?key=${ADMIN}\n`);
 
 // 3. spawn one claude player per brain
+// Run bots at LOWEST CPU priority (nice 19) so the server's realtime `say`
+// audio is never starved during the bots' "thinking" CPU bursts (which was
+// making speech stutter under the 8-process load).
 reg.forEach((a, i) => {
-  const bot = spawn("node", [join(ROOT, "bot", "sh-bot.mjs")], {
+  const bot = spawn("nice", ["-n", "19", "node", join(ROOT, "bot", "sh-bot.mjs")], {
     env: { ...process.env, ARENA_URL: URL_, ARENA_TOKEN: a.token, BOT_ID: a.id, CLAUDE_MODEL: BRAINS[i], BOT_WORKSPACE: join(RUN_DIR, a.id) },
     stdio: ["ignore", "inherit", "inherit"] });
   children.push(bot);
