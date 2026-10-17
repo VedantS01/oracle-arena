@@ -73,7 +73,10 @@ function listEnVoices() {
 // (just more robotic). So default to compact and never new-gen. Auto-upgrade to
 // Enhanced/Premium once the user installs them (clean AND smooth). VOICES env
 // overrides entirely (pipe-separated voice names).
-const COMPACT = ["Samantha", "Daniel (English (UK))", "Karen", "Moira (English (Ireland))", "Kathy", "Fred", "Ralph", "Junior", "Albert"];
+// Only the genuinely clear compact voices — the old MacinTalk voices (Albert,
+// Fred, Ralph, Junior) are warbly/robotic and sound glitchy, so they're out.
+// Fewer than 8, so players share; clarity beats distinctness here.
+const COMPACT = ["Samantha", "Daniel (English (UK))", "Karen", "Moira (English (Ireland))", "Kathy"];
 function voicePool() {
   if (process.env.VOICES) return process.env.VOICES.split("|");
   const premium = listEnVoices().filter((n) => /\((Premium|Enhanced)\)/i.test(n));
