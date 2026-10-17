@@ -49,7 +49,7 @@ function note(id, msg, extra = {}) { const arr = privateInbox.get(id) || []; arr
 // time, through a single queue. The post's text is REVEALED to the dashboard
 // only as it begins to be spoken, so the written messages flow at talking pace.
 const TTS = process.env.TTS !== "0";
-const SAY_RATE = Number(process.env.SAY_RATE || 166);
+const SAY_RATE = process.env.SAY_RATE ? Number(process.env.SAY_RATE) : null; // null = each voice's NATURAL rate — clearer than forcing -r, which degrades the new/neural voices
 let VOICES = {};            // alias -> macOS voice name
 let NARR_VOICE = null;      // the narrator's voice
 const speechQ = [];         // { voice, text, onStart }
@@ -92,7 +92,7 @@ function drainSpeech() {
   const finish = () => { speaking = false; setTimeout(drainSpeech, 260); }; // a beat between speakers
   if (!TTS) { speaking = false; return drainSpeech(); }
   try {
-    const args = ["-r", String(SAY_RATE)]; if (item.voice) args.push("-v", item.voice);
+    const args = []; if (SAY_RATE) args.push("-r", String(SAY_RATE)); if (item.voice) args.push("-v", item.voice);
     args.push(item.text.slice(0, 600));
     const ch = spawn("say", args, { stdio: "ignore" });
     ch.on("exit", finish); ch.on("error", finish);
