@@ -8,8 +8,9 @@
 // action has a deadline, after which the server posts a default legal move and
 // advances. Env: PORT, DISCUSSION_MS, ACTION_MS, ARENA_ADMIN_KEY, SEED.
 import { createServer } from "node:http";
-import { readFileSync } from "node:fs";
+import { readFileSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { randomBytes } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
@@ -67,15 +68,17 @@ function listEnVoices() {
     return r.stdout.split("\n").map((l) => { const i = l.search(/\s+en_[A-Z]{2}\b/); return i > 0 ? l.slice(0, i).trim() : null; }).filter(Boolean);
   } catch { return []; }
 }
-const NEWGEN = ["Eddy (English (US))", "Flo (English (US))", "Reed (English (US))", "Rocko (English (US))", "Sandy (English (US))", "Shelley (English (US))", "Grandma (English (US))", "Grandpa (English (US))", "Reed (English (UK))", "Rocko (English (UK))", "Grandpa (English (UK))"];
+// On this machine the new-gen "personality" voices (Eddy, Flo, Grandma, …)
+// STUTTER on playback, while the classic COMPACT voices play perfectly clean
+// (just more robotic). So default to compact and never new-gen. Auto-upgrade to
+// Enhanced/Premium once the user installs them (clean AND smooth). VOICES env
+// overrides entirely (pipe-separated voice names).
+const COMPACT = ["Samantha", "Daniel (English (UK))", "Karen", "Moira (English (Ireland))", "Kathy", "Fred", "Ralph", "Junior", "Albert"];
 function voicePool() {
   if (process.env.VOICES) return process.env.VOICES.split("|");
-  const all = listEnVoices();
-  const premium = all.filter((n) => /\((Premium|Enhanced)\)/i.test(n));
-  if (premium.length >= 2) return premium;                       // best: use downloaded HQ voices
-  const newgen = NEWGEN.filter((n) => all.includes(n));
-  if (newgen.length >= 4) return newgen;                         // better: smoother new-gen voices
-  return ["Samantha", "Daniel (English (UK))", "Karen", "Moira (English (Ireland))"]; // last resort
+  const premium = listEnVoices().filter((n) => /\((Premium|Enhanced)\)/i.test(n));
+  if (premium.length >= 2) return premium;   // best: downloaded high-fidelity voices
+  return COMPACT;                            // clean on this machine
 }
 function assignVoices(ids) {
   const pool = voicePool();
@@ -83,19 +86,30 @@ function assignVoices(ids) {
   NARR_VOICE = process.env.NARRATOR_VOICE || pool[ids.length % pool.length] || pool[0];
   emit("voices", { voices: VOICES, narrator: NARR_VOICE, tts: TTS, pool });
 }
+let ttsN = 0;
 function drainSpeech() {
   if (speaking) return;
   const item = speechQ.shift();
   if (!item) return;
   speaking = true;
   try { item.onStart && item.onStart(); } catch {}
-  const finish = () => { speaking = false; setTimeout(drainSpeech, 260); }; // a beat between speakers
+  const finish = () => { speaking = false; setTimeout(drainSpeech, 180); }; // a beat between speakers
   if (!TTS) { speaking = false; return drainSpeech(); }
+  // Render to a file first, then play the finished buffer with afplay. Realtime
+  // `say` playback can stutter/drop under CPU load (8 bot processes), which sounds
+  // "interrupted"; playing a pre-rendered buffer is immune to that jitter.
   try {
-    const args = []; if (SAY_RATE) args.push("-r", String(SAY_RATE)); if (item.voice) args.push("-v", item.voice);
+    const f = join(tmpdir(), `sh-tts-${process.pid}-${++ttsN}.aiff`);
+    const args = ["-o", f]; if (SAY_RATE) args.push("-r", String(SAY_RATE)); if (item.voice) args.push("-v", item.voice);
     args.push(item.text.slice(0, 600));
-    const ch = spawn("say", args, { stdio: "ignore" });
-    ch.on("exit", finish); ch.on("error", finish);
+    const r = spawn("say", args, { stdio: "ignore" });
+    r.on("error", finish);
+    r.on("exit", (code) => {
+      if (code !== 0) return finish();
+      const a = spawn("afplay", [f], { stdio: "ignore" });
+      const done = () => { try { unlinkSync(f); } catch {} finish(); };
+      a.on("exit", done); a.on("error", done);
+    });
   } catch { finish(); }
 }
 function enqueueSpeech(item) { speechQ.push(item); drainSpeech(); }
